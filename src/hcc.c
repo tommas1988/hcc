@@ -136,13 +136,13 @@ enum {
 
 
 static void count_line(const char *filename) {
-  int fd = open(filename, O_RDONLY);
-  char wh_buf[MAX_COMMENT_SIZE + BUFFER_SIZE], *buf;
+  int fd;
+  char buf[MAX_COMMENT_SIZE + BUFFER_SIZE], *read_buf;
   ssize_t bytes_read, pos;
-  int in_testing = 1, in_comment = 0, met_end_comment = 0;
+  boolean in_code = FALSE, in_comment = FALSE, match_end_comment = FALSE;
   int filename_len;
   struct lang_comment_list *comments;
-  struct comment_str *cp;
+  struct comment_str *csp;
   struct line_counter_list_entry *list_entry;
   struct line_counter *counter;
 
@@ -179,6 +179,7 @@ static void count_line(const char *filename) {
     counter_list.tail = counter;
   }
 
+  fd = open(filename, O_RDONLY);
   if (fd == -1) {
     error("Cannot open file: %s", filename);
     exit(EXIT_FAILURE);
@@ -186,8 +187,8 @@ static void count_line(const char *filename) {
 
   posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
 
-  buf = &wh_buf[MAX_COMMENT_SIZE];
-  while ((bytes_read = read(fd, buf, BUFFER_SIZE))) {
+  read_buf = &buf[MAX_COMMENT_SIZE];
+  while ((bytes_read = read(fd, read_buf, BUFFER_SIZE))) {
     if (bytes_read == -1) {
       error("Read file %s error", filename);
       exit(EXIT_FAILURE);
@@ -195,41 +196,67 @@ static void count_line(const char *filename) {
 
     pos = pos < 0 ? pos : 0;
     while (pos >= 0 && pos < bytes_read) {
-      if (in_testing) { /* test blank line and the beginning of comments */
-        switch (buf[pos]) {
-        case ' ':
-        case '\t':
-        case '\v':
-        case '\r':
-          pos++;
-          break;
-        case '\n':
-          pos++;
-          update_counter(COUNTER_BLANK, counter);
-          break;
-        default:
-          in_testing = 0;
-          break;
+      if (in_code) {
+        if (read_buf[pos] == '\n') {
+          update_counter(COUNTER_CODE, counter);
+          /* set in_code to FALSE in order to test next line type */
+          in_code = FALSE;
         }
+        pos++;
+      } else if (in_comment) {
+        if (csp->end.len && csp->end.val[0] == read_buf[pos]) {
+          int bytes_left = bytes_read - pos;
+          int len = bytes_left < csp->end.len ? bytes_left : csp->end.len;
 
-        if (!in_testing) {      /* test match comment */
-          int i = 0;
+          if (!strncmp(csp->end.val, read_buf + pos, len)) {
+            if (bytes_left < csp->end.len) { /* partial match */
+              strncpy(read_buf - len, read_buf + pos, len);
+              pos = -len;
+              break;            /* refill buffer */
+            }
+
+            pos += len;
+            match_end_comment = TRUE;
+          } else {
+            pos++;
+          }
+        } else if (read_buf[pos] == '\n') {
+          update_counter(COUNTER_COMMENT, counter);
+
+          if (match_end_comment) {
+            in_comment = match_end_comment = FALSE;
+          } else if (!csp->end.len) {   /* inline comment */
+            in_comment = FALSE;
+          }
+
+          pos++;
+        } else if (isspace(read_buf[pos])) { /* not a space charactor */
+          in_code = TRUE;
+          in_comment = match_end_comment = FALSE;
+          pos++;
+        }
+      } else {
+        if (read_buf[pos] == '\n') {
+          update_counter(COUNTER_BLANK, counter);
+          pos++;
+        } else if (isspace(read_buf[pos])) { /* not space charactor */
           int bytes_left = bytes_read - pos, bytes_match = 0;
-          cp = comments->list[i];
-          while (cp) {
-            int len = bytes_left < cp->start.len ? bytes_left : cp->start.len;
-            if (!strncmp(cp->begin.val, buf + pos, len)) {
+          int i = 0;
+
+          csp = comments->list[i];
+          while (csp) {
+            int len = bytes_left < csp->start.len ? bytes_left : csp->start.len;
+            if (!strncmp(csp->begin.val, read_buf + pos, len)) {
               bytes_match = len;
-              if (bytes_left < cp->start.len) { /* partial match */
-                strncpy(buf - len, buf + pos, len);
+              if (bytes_left < csp->start.len) { /* partial match */
+                strncpy(read_buf - len, read_buf + pos, len);
                 pos = -len;
-                in_testing = 1;
               } else {
-                in_comment = 1;
+                in_comment = TRUE;
               }
               break;
             }
-            cp = comments->list[++i];
+            csp = comments->list[++i];
           }
 
           if (pos < 0) {        /* partial match, refill buffer */
@@ -238,39 +265,6 @@ static void count_line(const char *filename) {
 
           pos += (bytes_match ? bytes_match : 1);
         }
-      } else if (in_comment) {  /* test the end of comments */
-        if (cp->end.len && cp->end.val[0] == buf[pos]) {
-          int bytes_left = bytes_read - pos;
-          int len = bytes_left < cp->end.len ? bytes_left : cp->end.len;
-
-          if (!strncmp(cp->end.val, buf + pos, len)) {
-            if (bytes_left < cp->end.len) { /* partial match */
-              strncpy(buf - len, buf + pos, len);
-              pos = -len;
-              break;            /* refill buffer */
-            }
-
-            pos += len;
-            met_end_comment = 1;
-            continue;
-          }
-        } else if (buf[pos] == '\n') {
-          update_counter(COUNTER_COMMENT, counter);
-          if (met_end_comment) {
-            in_comment = met_end_comment = 0;
-          }
-          if (!cp->end.len) {   /* inline comment */
-            in_comment = 0;
-          }
-        }
-
-        pos++;
-      } else {                  /* test new line character */
-        if (buf[pos] == '\n') {
-          update_counter(COUNTER_CODE, counter);
-          in_testing = 1;
-        }
-        pos++;
       }
     }
   }

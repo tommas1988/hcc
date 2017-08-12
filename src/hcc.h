@@ -7,6 +7,11 @@
 #define ERR_BUF_SIZE 100
 #define BUFFER_SIZE (16 * 1024)
 
+#define TRUE 1
+#define FALSE 0
+
+typedef int boolean;
+
 struct comment_part_str {
   int len;
   char *val;
