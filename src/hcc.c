@@ -16,6 +16,9 @@
 #include <ftw.h>
 
 #include "hcc.h"
+#include "../deps/inih/ini.h"
+
+#include "comment_definitions.c"
 
 static struct hash_table *lang_comment_list_table;
 
@@ -83,7 +86,7 @@ static struct lang_comment_list **find_comment_list(const char *key, struct hash
   return NULL;
 }
 
-static struct lang_comment *get_lang_comment_list(const char *filename) {
+static struct lang_comment_list *get_lang_comment_list(const char *filename) {
   char buf[FILENAME_MAX];
   char *p, *bname;
   struct lang_comment_list **comments;
@@ -143,6 +146,7 @@ static void count_line(const char *filename) {
   int filename_len;
   struct lang_comment_list *comments;
   struct comment_str *csp;
+  /* TODO: rename list_entry */
   struct line_counter_list_entry *list_entry;
   struct line_counter *counter;
 
@@ -155,6 +159,7 @@ static void count_line(const char *filename) {
     error("Cannot alloc counter");
     exit(EXIT_FAILURE);
   }
+  list_entry->next = NULL;
   counter = &list_entry->counter;
 
   filename_len = strlen(filename);
@@ -170,13 +175,12 @@ static void count_line(const char *filename) {
 
   strncpy(counter->filename, filename, filename_len);
   counter->lang = comments->lang;
-  counter->next = NULL;
   if (!counter_list.head) {
-    counter_list.head = counter;
-    counter_list.tail = counter;
+    counter_list.head = list_entry;
+    counter_list.tail = list_entry;
   } else {
-    counter_list.tail->next = counter;
-    counter_list.tail = counter;
+    counter_list.tail->next = list_entry;
+    counter_list.tail = list_entry;
   }
 
   fd = open(filename, O_RDONLY);
@@ -246,7 +250,7 @@ static void count_line(const char *filename) {
           csp = comments->list[i];
           while (csp) {
             int len = bytes_left < csp->start.len ? bytes_left : csp->start.len;
-            if (!strncmp(csp->begin.val, read_buf + pos, len)) {
+            if (!strncmp(csp->start.val, read_buf + pos, len)) {
               bytes_match = len;
               if (bytes_left < csp->start.len) { /* partial match */
                 strncpy(read_buf - len, read_buf + pos, len);
@@ -322,30 +326,35 @@ static void build_lang_comment_list_table() {
   php_comment->list[3] = NULL;
 
   /* .h .c file extension for c comment */
-  slot = find_comment(".h", lang_comment_list_table, 1);
+  slot = find_comment_list(".h", lang_comment_list_table, 1);
   *slot = c_comment;
-  slot = find_comment(".c", lang_comment_list_table, 1);
+  slot = find_comment_list(".c", lang_comment_list_table, 1);
   *slot = c_comment;
 
   /* .cpp file extension for c++ comment */
-  slot = find_comment(".cpp", lang_comment_list_table, 1);
+  slot = find_comment_list(".cpp", lang_comment_list_table, 1);
   *slot = cpp_comment;
 
   /* .sh file extension for shell comment */
-  slot = find_comment(".sh", lang_comment_list_table, 1);
+  slot = find_comment_list(".sh", lang_comment_list_table, 1);
   *slot = shell_comment;
 
   /* .php file extension for php comment */
-  slot = find_comment(".php", lang_comment_list_table, 1);
+  slot = find_comment_list(".php", lang_comment_list_table, 1);
   *slot = php_comment;
+}
+
+static int build_comments_table(void* user, const char* lang, const char* name, const char* value) {
+  printf("language: %s\n name: %s\nvalue: %s\n", lang, name, value);
+  return 0;
 }
 
 static void print_result() {
   struct line_counter_list_entry *list_entry = counter_list.head;
-  struct counter *counter;
+  struct line_counter *counter;
 
   while (list_entry) {
-    counter = &list_entry->counter;
+    counter = &(list_entry->counter);
     puts(counter->filename);
     puts(counter->lang);
     printf("\tCommnet line: %d\n\tBlank line: %d\n\tCode line: %d\n", counter->comment_lines, counter->blank_lines, counter->code_lines);
@@ -374,6 +383,9 @@ int main(int argc, char *argv[]) {
       break;
     }
   }
+
+  ini_parse_string(comment_definitions, build_comments_table, NULL);
+  exit(EXIT_SUCCESS);
 
   if (!argv[optind]) {
     fputs("File or directory argument is required", stderr);

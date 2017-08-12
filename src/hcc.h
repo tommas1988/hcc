@@ -22,6 +22,12 @@ struct comment_str {
   struct comment_part_str end;
 };
 
+struct lang_comment_definition {
+  char *lang;
+  char **patterns;
+  struct comment_str **comments;
+};
+
 struct lang_comment_list {
   char *lang;
   struct comment_str *list[];
@@ -42,7 +48,7 @@ struct line_counter {
 
 struct line_counter_list_entry {
   struct line_counter counter;
-  struct line_counter *next;
+  struct line_counter_list_entry *next;
 };
 
 struct line_counter_list {

@@ -1,2 +1,5 @@
-hcc
+out/
 src/comment_definitions.c
+GPATH
+GRTAGS
+GTAGS
