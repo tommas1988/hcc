@@ -20,6 +20,9 @@
 
 #include "comment_definitions.c"
 
+static struct hash_table *comment_table;
+static struct hash_table *lang_table;
+
 static struct hash_table *lang_comment_list_table;
 
 static struct line_counter_list counter_list = {
@@ -41,7 +44,7 @@ static struct comment_str sharp_comment = {
   { 0, }
 };
 
-static void error(const char *format, ...) {
+static void error(int status, const char *format, ...) {
   va_list var_arg;
   char buf[ERR_BUF_SIZE];
 
@@ -50,6 +53,8 @@ static void error(const char *format, ...) {
   va_end(var_arg);
 
   perror(buf);
+
+  exit(status);
 }
 
 static void strtolower(char *str) {
@@ -348,6 +353,17 @@ static int build_comments_table(void* user, const char* lang, const char* name, 
   printf("language: %s\n name: %s\nvalue: %s\n", lang, name, value);
   return 0;
 }
+
+#define init_hash_table (ht, size)                                      \
+  do {                                                                  \
+    ht = calloc(1, sizeof(struct hash_table) + sizeof(void *) * (size)); \
+    if (!ht) {                                                          \
+      error(EXIT_FAILURE, "Cannot allocate hash table");                \
+    }                                                                   \
+                                                                        \
+    ht->size = size;                                                    \
+    ht->free = size;                                                    \
+  } while (0)                                                           \
 
 static void print_result() {
   struct line_counter_list_entry *list_entry = counter_list.head;
