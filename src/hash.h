@@ -16,7 +16,7 @@ struct hash_table {
   bucket buckets[];
 };
 
-typedef void (*update_bucket_func)(struct bucket *bktp, const char *key, void *value);
+typedef void (*hash_table_bucket_init) (struct bucket *bktp, const char *key);
 
 #define init_hash_table (ht, size)                                      \
   do {                                                                  \
@@ -32,7 +32,7 @@ typedef void (*update_bucket_func)(struct bucket *bktp, const char *key, void *v
     ht->free = size;                                                    \
   } while (0)
 
-void *hash_table_find(struct hash_table *ht, const char *key);
-void hash_table_add_or_update(struct hash_table *ht, const char *key, void *value, update_bucket_func func);
+void *hash_table_find_with_add(struct hash_table *ht, const char *key, hash_table_bucket_init init_func);
+#define hash_table_find (ht, key) hash_table_find_with_add((ht), (key), NULL)
 
 #endif

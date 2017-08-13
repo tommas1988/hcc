@@ -5,14 +5,13 @@
 
 #define MAX_FTW_FD 10
 
-#define MAX_COMMENT_SIZE 50
+#define MAX_LANG_SIZE 10
+#define MAX_COMMENT_SIZE 20
 #define BUFFER_SIZE (16 * 1024)
 
-#define INIT_LANG_TABLE_SIZE 32
-#define INIT_COMMENT_TABLE_SIZE 32
-
-#define INIT_COMMENT_SIZE 32
-#define INIT_LANG_COMMENT_SIZE 8
+#define INIT_PATTERN_LIST_SIZE 32
+#define INIT_LANG_COMMENT_TABLE_SIZE 32
+#define INIT_LANG_COMMENT_LIST_SIZE 8
 
 #define TRUE 1
 #define FALSE 0
@@ -29,14 +28,9 @@ struct comment {
   struct comment_str end;
 };
 
-struct lang_comment_definition {
-  char *lang;
-  struct sq_list comments;
-};
-
-struct lang_lang_identity {
+struct lang_match_pattern {
   char *pattern;
-  struct sq_list comment_defs;
+  char *lang;
 };
 
 struct line_counter {

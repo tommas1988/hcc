@@ -1,9 +1,9 @@
 #! /bin/sh
-cat src/comment_definitions.ini |
+cat src/comment_def_config.ini |
     sed 's/\\/\\\\/' | sed 's/\"/\\\"/' | sed "s/'/\\'/" |
     awk '
 BEGIN {
-        out = "static const char *comment_definitions = ";
+        out = "static const char *comment_def_config = ";
 }
 {
         if ($0 != "") {
@@ -13,5 +13,5 @@ BEGIN {
 END {
         print out ";"
 }
-' > src/comment_definitions.c
+' > src/comment_def_config.c
 

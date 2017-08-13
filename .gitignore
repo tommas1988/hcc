@@ -1,5 +1,5 @@
 out/
-src/comment_definitions.c
+src/comment_def_config.c
 GPATH
 GRTAGS
 GTAGS

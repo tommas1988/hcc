@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #include "hash.h"
 
@@ -47,13 +48,6 @@ static struct bucket *hash_table_find_bucket(struct hash_table *ht, const char *
   return NULL;
 }
 
-void *hash_table_find(struct hash_table *ht, const char *key) {
-  int is_empty;
-  struct bucket *bktp = hash_table_find_bucket(ht, key, &is_empty);
-
-  return (bktp && !is_empty) ? bktp->value : NULL;
-}
-
 static struct hash_table *rehash(struct hash_table *ht) {
   unsigned int size = ht->size << 1;
   struct hash_table *nht;
@@ -72,18 +66,23 @@ static struct hash_table *rehash(struct hash_table *ht) {
   free(ht);
 }
 
-void hash_table_add_or_update(struct hash_table *ht, const char *key, void *value, update_bucket_func func) {
+void *hash_table_find_with_add(struct hash_table *ht, const char *key, hash_table_bucket_init init_func) {
   int is_empty;
   struct bucket *bktp;
 
-  if (ht->free == 0) {
-    ht = rehash(ht);
-  }
-
   bktp = hash_table_find_bucket(ht, key, &is_empty);
-  func(bktp, key, value);
 
-  if (is_empty) {
+  if (bktp && !is_empty) {
+    return bktp->value;
+  } else if (!init_func) {
+    return NULL;
+  } else {
+    if (!bktp) {
+      assert(ht->free == 0);
+      rehash(ht);
+    }
+
+    init_func(bktp, key);
     ht->free--;
   }
 }

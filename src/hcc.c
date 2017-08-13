@@ -17,88 +17,14 @@
 #include "../deps/inih/ini.h"
 
 #include "error.h"
+#include "sq_list.h"
 #include "hash.h"
 #include "hcc.h"
 
-#include "comment_definitions.c"
+#include "comment_def_config.c"
 
-static struct hash_table *comment_table;
-static struct hash_table *lang_table;
-
-static struct hash_table *lang_comment_list_table;
-
-static struct line_counter_list counter_list = {
-  NULL, NULL
-};
-
-static struct comment_str c_style_comment = {
-  { sizeof("/*") - 1, "/*" },
-  { sizeof("*/") - 1, "*/" }
-};
-
-static struct comment_str cpp_style_comment = {
-  { sizeof("//") - 1, "//" },
-  { 0, }
-};
-
-static struct comment_str sharp_comment = {
-  { sizeof("#") - 1, "#" },
-  { 0, }
-};
-
-static void strtolower(char *str) {
-  while (*str) {
-    *str = tolower(*str);
-    str++;
-  }
-}
-
-static struct lang_comment_list **find_comment_list(const char *key, struct hash_table *comment_list_table, int free) {
-  unsigned long hash = hash_func(key);
-  int i, id;
-
-  for (i = 0; i < comment_list_table->size; i++) {
-    id = ((hash) + i * ((hash & 1) ? hash : (hash + 1))) % comment_list_table->size;
-    if (free && !comment_list_table->buckets[id]) {
-      return &comment_list_table->buckets[id];
-    } else if (!free && comment_list_table->buckets[id]) {
-      return &comment_list_table->buckets[id];
-    }
-  }
-
-  return NULL;
-}
-
-static struct lang_comment_list *get_lang_comment_list(const char *filename) {
-  char buf[FILENAME_MAX];
-  char *p, *bname;
-  struct lang_comment_list **comments;
-
-  strcpy(buf, filename);
-  bname = basename(buf);
-  strtolower(bname);
-
-  /* find comments by file extension first */
-  if ((p = strrchr(bname, '.'))) {
-    comments = find_comment_list(p, lang_comment_list_table, 0);
-
-    if (comments) {
-      return *comments;
-    }
-  } else {
-    comments = NULL;
-  }
-
-  if (!comments) {              /* find comments by filename */
-    comments = find_comment_list(bname, lang_comment_list_table, 0);
-  }
-
-  if (comments) {
-    return *comments;
-  }
-
-  return NULL;
-}
+static struct sq_list lang_pattern_list;
+static struct hash_table *lang_comment_table;
 
 enum {
   COUNTER_COMMENT,
@@ -269,80 +195,6 @@ static void usage() {
   puts("Count the actual code lines in each file");
 }
 
-static void build_lang_comment_list_table() {
-  unsigned int lang_size = 5;
-
-  unsigned int table_size = 1;
-  struct lang_comment_list **slot;
-
-  /* hash_m must be power of 2 */
-  while (lang_size >>= 1) {
-    table_size <<= 1;
-  }
-  table_size <<= 1;
-
-  lang_comment_list_table = calloc(1, sizeof(struct hash_table) + sizeof(struct lang_comment_list *) * table_size);
-  lang_comment_list_table->size = table_size;
-
-  struct lang_comment_list *c_comment = malloc(sizeof(struct lang_comment_list) + sizeof(struct comment_str *) * 3);
-  c_comment->lang = "c";
-  c_comment->list[0] = &c_style_comment;
-  c_comment->list[1] = &cpp_style_comment;
-  c_comment->list[2] = NULL;
-
-  struct lang_comment_list *cpp_comment = malloc(sizeof(struct lang_comment_list) + sizeof(struct comment_str *) * 3);
-  cpp_comment->lang = "c++";
-  cpp_comment->list[0] = &c_style_comment;
-  cpp_comment->list[1] = &cpp_style_comment;
-  cpp_comment->list[2] = NULL;
-
-  struct lang_comment_list *shell_comment = malloc(sizeof(struct lang_comment_list) + sizeof(struct comment_str *) * 2);
-  shell_comment->lang = "shell";
-  shell_comment->list[0] = &sharp_comment;
-  shell_comment->list[1] = NULL;
-
-  struct lang_comment_list *php_comment = malloc(sizeof(struct lang_comment_list) + sizeof(struct comment_str *) * 4);
-  php_comment->lang = "php";
-  php_comment->list[0] = &c_style_comment;
-  php_comment->list[1] = &cpp_style_comment;
-  php_comment->list[2] = &sharp_comment;
-  php_comment->list[3] = NULL;
-
-  /* .h .c file extension for c comment */
-  slot = find_comment_list(".h", lang_comment_list_table, 1);
-  *slot = c_comment;
-  slot = find_comment_list(".c", lang_comment_list_table, 1);
-  *slot = c_comment;
-
-  /* .cpp file extension for c++ comment */
-  slot = find_comment_list(".cpp", lang_comment_list_table, 1);
-  *slot = cpp_comment;
-
-  /* .sh file extension for shell comment */
-  slot = find_comment_list(".sh", lang_comment_list_table, 1);
-  *slot = shell_comment;
-
-  /* .php file extension for php comment */
-  slot = find_comment_list(".php", lang_comment_list_table, 1);
-  *slot = php_comment;
-}
-
-static struct lang_comment_list **find_comment_list(const char *key, struct hash_table *comment_list_table, int free) {
-  unsigned long hash = hash_func(key);
-  int i, id;
-
-  for (i = 0; i < comment_list_table->size; i++) {
-    id = ((hash) + i * ((hash & 1) ? hash : (hash + 1))) % comment_list_table->size;
-    if (free && !comment_list_table->buckets[id]) {
-      return &comment_list_table->buckets[id];
-    } else if (!free && comment_list_table->buckets[id]) {
-      return &comment_list_table->buckets[id];
-    }
-  }
-
-  return NULL;
-}
-
 static void print_result() {
   struct line_counter_list_entry *list_entry = counter_list.head;
   struct line_counter *counter;
@@ -356,29 +208,153 @@ static void print_result() {
   }
 }
 
-static struct comment *get_comment(const char *str) {
+#define lang_str_cpy (dest, lang_str)                   \
+  do {                                                  \
+    (dest) = malloc(MAX_LANG_SIZE + 1);                 \
+    if (!(dest)) {                                      \
+      error(EXIT_FAILURE, "Cannot alloc lang key");     \
+    }                                                   \
+                                                        \
+    strncpy((dest), (lang_str), MAX_LANG_SIZE + 1);     \
+  } while (0)
+
+static void create_comment_list(bucket *bktp, const char *key) {
+  char *lang_key;
+  struct sq_list *comment_list;
+
+  comment_list = malloc(sizeof(struct sq_list));
+  init_sq_list(comment_list, INIT_LANG_COMMENT_LIST_SIZE);
+
+  lang_str_cpy(lang_key, key);
+  bktp->key = lang_key;
+  bktp->value = comment_list;
 }
 
-static struct lang_comment_definition *get_comment_definition(const char *lang) {
+static comment *create_comment_from_string(const char *str) {
+  struct comment *comment;
+  char *p;
+
+  comment = malloc(sizeof(struct comment));
+  if (!comment) {
+    error(EXIT_FAILURE, "Cannot alloc comment");
+  }
+
+  /* TODO: trim leading & trailing space charactors first */
+
+  p = strchr(str, ' ');
+  if (p) {
+    int start_len = p - str;
+
+    comment->start.len = start_len;
+    comment->start.val = str;
+    comment->end.len = strlen(str) - start_len - 1;
+    comment->end.val = p + 1;
+  } else {
+    comment->start.len = strlen(str);
+    comment->start.val = str;
+    comment->end.len = 0;
+    comment->end.val = NULL;
+  }
+
+  return comment;
 }
 
-static int build_comments_table(void* user, const char* lang, const char* name, const char* value) {
-  printf("language: %s\n name: %s\nvalue: %s\n", lang, name, value);
+#define strtolower (str)                        \
+  do {                                          \
+    while ((*str)) {                            \
+      (*str) = tolower((*str));                 \
+      str++;                                    \
+    }                                           \
+  } while (0)
+
+static int build_comment_def(void* unused, const char* lang, const char* name, const char* value) {
+  char clang[MAX_LANG_SIZE + 1];
+
+  strncpy(clang, lang, MAX_LANG_SIZE);
+  clang[MAX_LANG_SIZE] = '\0';
+
+  strtolower(clang);
+
+  if (!strcmp(name, "pattern")) {
+    char *lang_key;
+
+    lang_str_cpy(lang_key, clang);
+    list_append(&lang_pattern_list, lang_key);
+  } else if (!strcmp(name, "comment")) {
+    struct sq_list *comment_list;
+
+    comment_list = (struct sq_list *) hash_table_find_with_add(lang_comment_table, clang, create_comment_list);
+    list_append(comment_list, (void *) create_comment_from_string(value));
+  } else {
+    error(EXIT_FAILURE, "Unknown comment definition field name");
+  }
+
   return 0;
+}
+
+static void init_data_struct() {
+  init_sq_list(&lang_pattern_list, INIT_PATTERN_LIST_SIZE);
+  init_hash_table(lang_comment_table, INIT_LANG_COMMENT_TABLE_SIZE);
+}
+
+static void display_lang_comment_match_pattern() {
+  struct lang_match_pattern *lang_pattern;
+
+  list_reset(&lang_pattern_list);
+  lang_pattern = (lang_match_pattern *) list_next(&lang_pattern_list);
+
+  puts("LANGUAGE\tPATTERN\tCOMMENT");
+
+  while (pattern) {
+    struct sq_list *comment_list;
+    struct comment *comment;
+
+    printf("%s\t%s", lang_pattern->lang, lang_pattern->pattern);
+
+    comment_list = (struct sq_list *) hash_table_find(lang_comment_table, lang_pattern->lang);
+    comment = (struct comment *) list_next(comment_list);
+    while (comment) {
+      char buf[MAX_COMMENT_SIZE];
+      int len;
+
+      len = comment->start.len;
+      strncpy(buf, comment->start.val, len);
+
+      if (comment->end.len) {
+        len++;
+        strncpy(buf + len, comment->end.val, comment->end.len);
+        len += comment->end.len;
+      }
+
+      buf[len] = '\0';
+
+      if (comment_list->current == 0) {
+        printf("\t%s", buf);
+      } else {
+        printf(", %s", buf);
+      }
+    }
+    putchar('\n');
+  }
 }
 
 int main(int argc, char *argv[]) {
   const char *short_opts = "h?";
   const struct option long_opts[] = {
-    { "help", no_argument, NULL, 'h'},
-    { NULL, 0, NULL, 0},
+    { "match-pattern", no_argument, NULL, 'P' },
+    { "help", no_argument, NULL, 'h' },
+    { NULL, 0, NULL, 0 },
   };
   int opt, i;
-  char pathname[PATH_MAX+1];
+  char pathname[PATH_MAX + 1];
+  boolean show_match_pattern = FALSE;
   struct stat sb;
 
   while ((opt = getopt_long(argc, argv, short_opts, long_opts, NULL)) != -1) {
     switch (opt) {
+    case 'P':
+      show_match_pattern = TRUE;
+      break;
     case 'h':
     case '?':
       usage();
@@ -389,11 +365,12 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  init_hash_table(comment_table, INIT_COMMENT_TABLE_SIZE);
-  init_hash_table(lang_table, INIT_LANG_TABLE_SIZE);
+  ini_parse_string(comment_def_confg, build_comment_def, NULL);
 
-  ini_parse_string(comment_definitions, build_comments_table, NULL);
-  exit(EXIT_SUCCESS);
+  if (show_match_pattern) {
+    display_lang_comment_match_pattern();
+    exit(EXIT_SUCCESS);
+  }
 
   if (!argv[optind]) {
     fputs("File or directory argument is required", stderr);
