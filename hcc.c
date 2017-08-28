@@ -8,18 +8,21 @@
 #include <string.h>
 #include <stdlib.h>
 #include <limits.h>
+#include <libgen.h>
 
 #define _XOPEN_SOURCE 500       /* required to use nftw */
 #include <ftw.h>
 
 #include "hcc.h"
 
-static struct comment c_comment = {
+static struct hash_table *lang_comment_table;
+
+static struct comment c_style_comment = {
   { sizeof("/*"), "/*" },
   { sizeof("*/"), "*/" }
 };
 
-static struct comment cpp_comment = {
+static struct comment cpp_style_comment = {
   { sizeof("//"), "//" },
   NULL
 };
@@ -29,25 +32,39 @@ static struct comment sharp_comment = {
   NULL
 };
 
-/* TODO: need a hash map to find comments */
-static lang_comment lang_comment_list[] = {
+static struct lang_comment c_comment = {
+  "c",
   {
-    "c",
-    {
-      &c_comment,
-      $cpp_comment,
-      NULL
-    }
-  },
+    &c_style_comment,
+    $cpp_style_comment,
+    NULL
+  }
+};
 
+static struct lang_comment cpp_comment = {
+  "c++",
   {
-    "php",
-    {
-      &c_comment,
-      &cpp_comment,
-      &sharp_comment,
-      NULL
-    }
+    &c_style_comment,
+    $cpp_style_comment,
+    NULL
+  }
+};
+
+static struct lang_comment shell_comment = {
+  "shell",
+  {
+    &sharp_comment,
+    NULL
+  }
+};
+
+static struct lang_comment php_comment = {
+  "php",
+  {
+    &c_style_comment,
+    &cpp_style_comment,
+    &sharp_comment,
+    NULL
   }
 };
 
@@ -64,36 +81,33 @@ static void error(const char *format, ...) {
 
 #define update_counter (is_code)
 
-static int get_file_extension(const char *filename, char *buf) {
-  size_t len = strlen(filename);
-  char *p = (char *) memrchr(filename, '.', len);
-
-  if (!p) {
-    return -1;
+static void strtolower(char *str) {
+  while (*str) {
+    *str = tolower(*str++);
   }
-
-  /* pass . character */
-  p++;
-
-  while (*p) {
-    *buf = tolower(*p);
-    p++;
-    buf++;
-  }
-
-  return 0;
 }
 
-static struct lang_comment *get_comment_list(const char *filename) {
-  char ext_buf[MAX_EXT_SIZE];
-  int i;
+static struct lang_comment *get_lang_comment(const char *filename) {
+  char buf[FILENAME_MAX];
+  char *p;
+  struct lang_comment **comments;
 
-  if (get_file_extension(filename, ext_buf) == -1) {
-    return NULL;
+  strtolower(basename(strcpy(buf, filename)));
+
+  /* find comments by file extension first */
+  p = strrchr(buf, '.');
+  comments = find_comment(p, lang_comment_table, 0);
+
+  if (*comments) {
+    return *comments;
   }
 
-  for (i = 0; i < sizeof(lang_comment_list); i++) {
-    
+  if (!*comments) {              /* find comments by filename */
+    comments = find_comments(buf, lang_comment_table, 0);
+  }
+
+  if (*comments) {
+    return *comments;
   }
 
   return NULL;
@@ -101,13 +115,15 @@ static struct lang_comment *get_comment_list(const char *filename) {
 
 static void count_code_line(const char *filename) {
   int fd = open(filename, O_RDONLY);
-  char buf[BUFFER_SIZE], left_partial_comment[MAX_CMNT_SIZE];
+  char buf[BUFFER_SIZE], partial_match_comment[MAX_CMNT_SIZE];
   ssize_t bytes_read, pos;
-  int in_testing = 1, in_comment = 0;
+  int in_testing = 1, in_comment = 0, partial_match = 0;
+  struct lang_comment *comments = get_lang_comment(filename);
+  struct comment *cp;
 
-  struct lang_comment *cp = get_comment_list(filename);
-  if (!cp) {
+  if (!comment) {
     /* count next file */
+    return;
   }
 
   if (fd == -1) {
@@ -141,7 +157,10 @@ static void count_code_line(const char *filename) {
         }
 
         if (!in_testing) {
-
+          cp = comments->list;
+          while (cp) {
+            
+          }
         }
 
         pos++;
@@ -176,6 +195,66 @@ static void scan_dir(const char *dirname) {
 static void usage() {
   puts("Usage: hcc [OPTION]... [FILE]...");
   puts("Count the actual code lines in each file");
+}
+
+static unsigned long hash_func(const char *key) {
+  char *p;
+  unsigned long hash = 0;
+
+  for (p = key; p != '/0'; p++) {
+    hash = hash * 33 + *p;
+  }
+
+  return hash;
+}
+
+static struct lang_comment **find_comment(const char *key, struct hash_table *lang_comment_table, int free) {
+  unsigned long hash = hash_func(key);
+  int i, id;
+
+  for (i = 0; i < lang_comment_table->size; i++) {
+    id = ((hash) + i * ((hash & 1) ? hash : (hash + 1))) % lang_comment_table->size;
+    if (free && !lang_comment_table[id]) {
+      return &lang_comment_table[id];
+    } else if (!free && lang_comment_table[id]) {
+      return &lang_comment_table[id];
+    }
+  }
+
+  return NULL;
+}
+
+static void build_lang_comment_hash_table() {
+  unsigned int lang_size = 5;
+
+  unsigned int table_size = 1;
+  struct lang_comment **slot;
+
+  /* hash_m must be power of 2 */
+  while (lang_size >> 1) {
+    table_size << 1;
+  }
+
+  lang_comment_table = calloc(1, sizeof(hash_table) + sizeof(lang_comment *) * table_size);
+  lang_comment_table->size = table_size;
+
+  /* .h .c file extension for c comment */
+  slot = find_comment(".h", lang_comment_table, 1);
+  *slot = &c_comment;
+  slot = find_comment(".c", lang_comment_table, 1);
+  *slot = &c_comment;
+
+  /* .cpp file extension for c++ comment */
+  slot = find_comment(".cpp", lang_comment_table, 1);
+  *slot = &cpp_comment;
+
+  /* .sh file extension for shell comment */
+  slot = find_comment(".sh", lang_comment_table, 1);
+  *slot = &sh_comment;
+
+  /* .php file extension for php comment */
+  slot = find_comment(".php", lang_comment_table, 1);
+  *slot = &php_comment;
 }
 
 int main(int argc, char *argv[]) {

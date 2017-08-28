@@ -2,17 +2,23 @@
 #define __HCC_H
 
 #include <unistd.h>
+#include <limits.h>
 
 #define MAX_FTW_FD 10
 
-#define MAX_CMNT_SIZE 20
+#define FILENAME_MAX (NAME_MAX + 1)
 #define MAX_EXT_SIZE 20
 #define ERR_BUF_SIZE 100
 #define BUFFER_SIZE (16 * 1024)
 
+struct hash_table {
+  unsigned int size;
+  lang_comment *buckets[];
+};
+
 struct comment_str {
-  ssize_t len;
-  char *str;
+  int len;
+  char *val;
 };
 
 struct comment {
