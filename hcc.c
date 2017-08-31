@@ -1,3 +1,6 @@
+#define _XOPEN_SOURCE 500       /* required by nftw */
+#define _POSIX_C_SOURCE 200112L /* required by posix_fadvise */
+
 #include <stdarg.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -10,7 +13,6 @@
 #include <limits.h>
 #include <libgen.h>
 
-#define _XOPEN_SOURCE 500       /* required to use nftw */
 #include <ftw.h>
 
 #include "hcc.h"
@@ -22,17 +24,17 @@ static struct line_counter_list counter_list = {
 };
 
 static struct comment c_style_comment = {
-  { sizeof("/*"), "/*" },
-  { sizeof("*/"), "*/" }
+  { sizeof("/*") - 1, "/*" },
+  { sizeof("*/") - 1, "*/" }
 };
 
 static struct comment cpp_style_comment = {
-  { sizeof("//"), "//" },
+  { sizeof("//") - 1, "//" },
   { 0, }
 };
 
 static struct comment sharp_comment = {
-  { sizeof("#"), "#" },
+  { sizeof("#") - 1, "#" },
   { 0, }
 };
 
@@ -47,27 +49,10 @@ static void error(const char *format, ...) {
   perror(buf);
 }
 
-enum {
-  COUNTER_COMMENT,
-  COUNTER_BLANK,
-  COUNTER_CODE,
-};
-#define update_counter (type, counter)          \
-  switch (type) {                               \
-  case COUNTER_COMMENT:                         \
-    counter->comment_line++;                    \
-    break;                                      \
-  case COUNTER_BLANK:                           \
-    counter->blank_line++;                      \
-    break;                                      \
-  case COUNTER_CODE:                            \
-    counter->code_line++;                       \
-    break;                                      \
-  }                                             \
-
 static void strtolower(char *str) {
   while (*str) {
-    *str = tolower(*str++);
+    *str = tolower(*str);
+    str++;
   }
 }
 
@@ -88,10 +73,10 @@ static struct lang_comment **find_comment(const char *key, struct hash_table *la
 
   for (i = 0; i < lang_comment_table->size; i++) {
     id = ((hash) + i * ((hash & 1) ? hash : (hash + 1))) % lang_comment_table->size;
-    if (free && !lang_comment_table[id]) {
-      return &lang_comment_table[id];
-    } else if (!free && lang_comment_table[id]) {
-      return &lang_comment_table[id];
+    if (free && !lang_comment_table->buckets[id]) {
+      return &lang_comment_table->buckets[id];
+    } else if (!free && lang_comment_table->buckets[id]) {
+      return &lang_comment_table->buckets[id];
     }
   }
 
@@ -100,45 +85,83 @@ static struct lang_comment **find_comment(const char *key, struct hash_table *la
 
 static struct lang_comment *get_lang_comment(const char *filename) {
   char buf[FILENAME_MAX];
-  char *p;
+  char *p, *bname;
   struct lang_comment **comments;
 
-  strtolower(basename(strcpy(buf, filename)));
+  strcpy(buf, filename);
+  bname = basename(buf);
+  strtolower(bname);
 
   /* find comments by file extension first */
-  p = strrchr(buf, '.');
-  comments = find_comment(p, lang_comment_table, 0);
+  if ((p = strrchr(bname, '.'))) {
+    comments = find_comment(p, lang_comment_table, 0);
 
-  if (*comments) {
-    return *comments;
+    if (comments) {
+      return *comments;
+    }
+  } else {
+    comments = NULL;
   }
 
-  if (!*comments) {              /* find comments by filename */
-    comments = find_comments(buf, lang_comment_table, 0);
+  if (!comments) {              /* find comments by filename */
+    comments = find_comment(bname, lang_comment_table, 0);
   }
 
-  if (*comments) {
+  if (comments) {
     return *comments;
   }
 
   return NULL;
 }
 
+enum {
+  COUNTER_COMMENT,
+  COUNTER_BLANK,
+  COUNTER_CODE,
+};
+#define update_counter(type, counter)           \
+  do {                                          \
+    switch (type) {                             \
+    case COUNTER_COMMENT:                       \
+      counter->comment_line++;                  \
+      break;                                    \
+    case COUNTER_BLANK:                         \
+      counter->blank_line++;                    \
+      break;                                    \
+    case COUNTER_CODE:                          \
+      counter->code_line++;                     \
+      break;                                    \
+    }                                           \
+  } while (0)                                   \
+
+
 static void count_line(const char *filename) {
   int fd = open(filename, O_RDONLY);
   char wh_buf[MAX_COMMENT_SIZE + BUFFER_SIZE], *buf;
   ssize_t bytes_read, pos;
-  int in_testing = 1, in_comment = 0;
-  struct lang_comment *comments = get_lang_comment(filename);
+  int in_testing = 1, in_comment = 0, met_end_comment = 0;
+  int filename_len;
+  struct lang_comment *comments;
   struct comment *cp;
   struct line_counter *counter;
 
   if (!(counter = malloc(sizeof(struct line_counter)))) {
-    error("Cannot create counter");
+    error("Cannot alloc counter");
     exit(EXIT_FAILURE);
   }
 
-  counter->filename = filename;
+  filename_len = strlen(filename);
+  if (filename_len > FILENAME_MAX) {
+    error("Too long file name");
+    exit(EXIT_FAILURE);
+  }
+
+  if (!(counter->filename = malloc(filename_len))) {
+    error("Cannot alloc filename");
+    exit(EXIT_FAILURE);
+  }
+
+  strncpy(counter->filename, filename, filename_len);
   counter->next = NULL;
   if (!counter_list.head) {
     counter_list.head = counter;
@@ -148,7 +171,7 @@ static void count_line(const char *filename) {
     counter_list.tail = counter;
   }
 
-  if (!comment) {
+  if (!(comments = get_lang_comment(filename))) {
     /* count next file */
     return;
   }
@@ -160,7 +183,7 @@ static void count_line(const char *filename) {
 
   posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
 
-  buf = w_buf[MAX_COMMENT_SIZE];
+  buf = &wh_buf[MAX_COMMENT_SIZE];
   while ((bytes_read = read(fd, buf, BUFFER_SIZE))) {
     if (bytes_read == -1) {
       error("Read file %s error", filename);
@@ -168,7 +191,7 @@ static void count_line(const char *filename) {
     }
 
     pos = pos < 0 ? pos : 0;
-    while (pos > 0 && pos < bytes_read) {
+    while (pos >= 0 && pos < bytes_read) {
       if (in_testing) { /* test blank line and the beginning of comments */
         switch (buf[pos]) {
         case ' ':
@@ -187,14 +210,15 @@ static void count_line(const char *filename) {
         }
 
         if (!in_testing) {      /* test match comment */
-          cp = comments->list;
+          int i = 0;
           int bytes_left = bytes_read - pos, bytes_match = 0;
+          cp = comments->list[i];
           while (cp) {
             int len = bytes_left < cp->begin.len ? bytes_left : cp->begin.len;
-            if (!strncmp(cp->begin.val, buf[pos], len)) {
+            if (!strncmp(cp->begin.val, buf + pos, len)) {
               bytes_match = len;
               if (bytes_left < cp->begin.len) { /* partial match */
-                strncpy(buf[-len], buf[pos], len);
+                strncpy(buf - len, buf + pos, len);
                 pos = -len;
                 in_testing = 1;
               } else {
@@ -202,7 +226,7 @@ static void count_line(const char *filename) {
               }
               break;
             }
-            cp++;
+            cp = comments->list[++i];
           }
 
           if (pos < 0) {        /* partial match, refill buffer */
@@ -213,22 +237,25 @@ static void count_line(const char *filename) {
         }
       } else if (in_comment) {  /* test the end of comments */
         if (cp->end.len && cp->end.val[0] == buf[pos]) {
-          int bytes_left = bytes_read - pos, bytes_match = 0;
+          int bytes_left = bytes_read - pos;
           int len = bytes_left < cp->end.len ? bytes_left : cp->end.len;
 
-          if (!strncmp(cp->end.val, buf[pos], len)) {
+          if (!strncmp(cp->end.val, buf + pos, len)) {
             if (bytes_left < cp->end.len) { /* partial match */
-              strncpy(buf[-len], buf[pos], len);
+              strncpy(buf - len, buf + pos, len);
               pos = -len;
               break;            /* refill buffer */
             }
 
             pos += len;
-            in_comment = 0;
+            met_end_comment = 1;
             continue;
           }
         } else if (buf[pos] == '\n') {
           update_counter(COUNTER_COMMENT, counter);
+          if (met_end_comment) {
+            in_comment = met_end_comment = 0;
+          }
           if (!cp->end.len) {   /* inline comment */
             in_comment = 0;
           }
@@ -239,8 +266,8 @@ static void count_line(const char *filename) {
         if (buf[pos] == '\n') {
           update_counter(COUNTER_CODE, counter);
           in_testing = 1;
-          pos++;
         }
+        pos++;
       }
     }
   }
@@ -248,7 +275,7 @@ static void count_line(const char *filename) {
 
 static int count_for_file(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
   if (typeflag == FTW_F) {
-    scan_file(fpath);
+    count_line(fpath);
   }
   return 0;
 }
@@ -265,11 +292,12 @@ static void build_lang_comment_hash_table() {
   struct lang_comment **slot;
 
   /* hash_m must be power of 2 */
-  while (lang_size >> 1) {
-    table_size << 1;
+  while (lang_size >>= 1) {
+    table_size <<= 1;
   }
+  table_size <<= 1;
 
-  lang_comment_table = calloc(1, sizeof(hash_table) + sizeof(lang_comment *) * table_size);
+  lang_comment_table = calloc(1, sizeof(struct hash_table) + sizeof(struct lang_comment *) * table_size);
   lang_comment_table->size = table_size;
 
   struct lang_comment *c_comment = malloc(sizeof(struct lang_comment) + sizeof(struct comment *) * 3);
@@ -298,21 +326,21 @@ static void build_lang_comment_hash_table() {
 
   /* .h .c file extension for c comment */
   slot = find_comment(".h", lang_comment_table, 1);
-  *slot = &c_comment;
+  *slot = c_comment;
   slot = find_comment(".c", lang_comment_table, 1);
-  *slot = &c_comment;
+  *slot = c_comment;
 
   /* .cpp file extension for c++ comment */
   slot = find_comment(".cpp", lang_comment_table, 1);
-  *slot = &cpp_comment;
+  *slot = cpp_comment;
 
   /* .sh file extension for shell comment */
   slot = find_comment(".sh", lang_comment_table, 1);
-  *slot = &sh_comment;
+  *slot = shell_comment;
 
   /* .php file extension for php comment */
   slot = find_comment(".php", lang_comment_table, 1);
-  *slot = &php_comment;
+  *slot = php_comment;
 }
 
 static void print_result() {
@@ -353,8 +381,10 @@ int main(int argc, char *argv[]) {
     exit(EXIT_FAILURE);
   }
 
+  build_lang_comment_hash_table();
+
   for (i = optind; argv[i]; i++) {
-    if (!realpath(argv[i], path)) {
+    if (!realpath(argv[i], pathname)) {
       fprintf(stderr, "Error: cannot locat file or directory: %s\n", argv[i]);
       exit(EXIT_FAILURE);
     }

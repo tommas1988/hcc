@@ -21,7 +21,7 @@ struct comment {
 
 struct lang_comment {
   char *lang;
-  struct comment **list;
+  struct comment *list[];
 };
 
 struct hash_table {
