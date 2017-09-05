@@ -12,30 +12,29 @@
 
 typedef int boolean;
 
-struct comment_part_str {
+struct comment_str {
   int len;
   char *val;
 };
 
-struct comment_str {
-  struct comment_part_str start;
-  struct comment_part_str end;
+struct comment {
+  struct comment_str start;
+  struct comment_str end;
 };
 
 struct lang_comment_definition {
   char *lang;
-  char **patterns;
-  struct comment_str **comments;
+  struct comment **comments;
 };
 
-struct lang_comment_list {
-  char *lang;
-  struct comment_str *list[];
+struct lang_comment_locator {
+  char *pattern;
+  struct lang_comment_definition *lang_comment;
 };
 
 struct hash_table {
   unsigned int size;
-  struct lang_comment_list *buckets[];
+  void *buckets[];
 };
 
 struct line_counter {
