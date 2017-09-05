@@ -363,7 +363,53 @@ static int build_comments_table(void* user, const char* lang, const char* name, 
                                                                         \
     ht->size = size;                                                    \
     ht->free = size;                                                    \
-  } while (0)                                                           \
+  } while (0)
+
+static unsigned long hash_func(const char *key) {
+  const char *p;
+  unsigned long hash = 0;
+
+  for (p = key; *p != '\0'; p++) {
+    hash = hash * 33 + *p;
+  }
+
+  return hash;
+}
+
+#define bucket_index (i, hash, size)                                    \
+  do {                                                                  \
+    /* Double Hashing */                                                \
+    ((hash) + (i) * (((hash) & 1) ? (hash) : ((hash) + 1))) % (size);   \
+  } while(0)
+
+static void **hash_table_find(struct hash_table *ht, const char *key) {
+  unsigned long hash = hash_func(key);
+  int i, idx;
+
+  for (i = 0; i < ht->size; i++) {
+    idx = bucket_index(i, hash, ht->size);
+  }
+}
+
+static void **hash_table_add(struct hash_table *ht, const char *key, void *value) {
+
+}
+
+static struct lang_comment_list **find_comment_list(const char *key, struct hash_table *comment_list_table, int free) {
+  unsigned long hash = hash_func(key);
+  int i, id;
+
+  for (i = 0; i < comment_list_table->size; i++) {
+    id = ((hash) + i * ((hash & 1) ? hash : (hash + 1))) % comment_list_table->size;
+    if (free && !comment_list_table->buckets[id]) {
+      return &comment_list_table->buckets[id];
+    } else if (!free && comment_list_table->buckets[id]) {
+      return &comment_list_table->buckets[id];
+    }
+  }
+
+  return NULL;
+}
 
 static void print_result() {
   struct line_counter_list_entry *list_entry = counter_list.head;
