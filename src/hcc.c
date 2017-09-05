@@ -1,7 +1,6 @@
 #define _XOPEN_SOURCE 500       /* required by nftw */
 #define _POSIX_C_SOURCE 200112L /* required by posix_fadvise */
 
-#include <stdarg.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <ctype.h>
@@ -15,8 +14,11 @@
 
 #include <ftw.h>
 
-#include "hcc.h"
 #include "../deps/inih/ini.h"
+
+#include "error.h"
+#include "hash.h"
+#include "hcc.h"
 
 #include "comment_definitions.c"
 
@@ -44,35 +46,11 @@ static struct comment_str sharp_comment = {
   { 0, }
 };
 
-static void error(int status, const char *format, ...) {
-  va_list var_arg;
-  char buf[ERR_BUF_SIZE];
-
-  va_start(var_arg, format);
-  vsnprintf(buf, ERR_BUF_SIZE, format, var_arg);
-  va_end(var_arg);
-
-  perror(buf);
-
-  exit(status);
-}
-
 static void strtolower(char *str) {
   while (*str) {
     *str = tolower(*str);
     str++;
   }
-}
-
-static unsigned long hash_func(const char *key) {
-  const char *p;
-  unsigned long hash = 0;
-
-  for (p = key; *p != '\0'; p++) {
-    hash = hash * 33 + *p;
-  }
-
-  return hash;
 }
 
 static struct lang_comment_list **find_comment_list(const char *key, struct hash_table *comment_list_table, int free) {
@@ -352,47 +330,6 @@ static void build_lang_comment_list_table() {
 static int build_comments_table(void* user, const char* lang, const char* name, const char* value) {
   printf("language: %s\n name: %s\nvalue: %s\n", lang, name, value);
   return 0;
-}
-
-#define init_hash_table (ht, size)                                      \
-  do {                                                                  \
-    ht = calloc(1, sizeof(struct hash_table) + sizeof(void *) * (size)); \
-    if (!ht) {                                                          \
-      error(EXIT_FAILURE, "Cannot allocate hash table");                \
-    }                                                                   \
-                                                                        \
-    ht->size = size;                                                    \
-    ht->free = size;                                                    \
-  } while (0)
-
-static unsigned long hash_func(const char *key) {
-  const char *p;
-  unsigned long hash = 0;
-
-  for (p = key; *p != '\0'; p++) {
-    hash = hash * 33 + *p;
-  }
-
-  return hash;
-}
-
-#define bucket_index (i, hash, size)                                    \
-  do {                                                                  \
-    /* Double Hashing */                                                \
-    ((hash) + (i) * (((hash) & 1) ? (hash) : ((hash) + 1))) % (size);   \
-  } while(0)
-
-static void **hash_table_find(struct hash_table *ht, const char *key) {
-  unsigned long hash = hash_func(key);
-  int i, idx;
-
-  for (i = 0; i < ht->size; i++) {
-    idx = bucket_index(i, hash, ht->size);
-  }
-}
-
-static void **hash_table_add(struct hash_table *ht, const char *key, void *value) {
-
 }
 
 static struct lang_comment_list **find_comment_list(const char *key, struct hash_table *comment_list_table, int free) {
