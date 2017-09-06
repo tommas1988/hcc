@@ -327,11 +327,6 @@ static void build_lang_comment_list_table() {
   *slot = php_comment;
 }
 
-static int build_comments_table(void* user, const char* lang, const char* name, const char* value) {
-  printf("language: %s\n name: %s\nvalue: %s\n", lang, name, value);
-  return 0;
-}
-
 static struct lang_comment_list **find_comment_list(const char *key, struct hash_table *comment_list_table, int free) {
   unsigned long hash = hash_func(key);
   int i, id;
@@ -361,6 +356,17 @@ static void print_result() {
   }
 }
 
+static struct comment *get_comment(const char *str) {
+}
+
+static struct lang_comment_definition *get_comment_definition(const char *lang) {
+}
+
+static int build_comments_table(void* user, const char* lang, const char* name, const char* value) {
+  printf("language: %s\n name: %s\nvalue: %s\n", lang, name, value);
+  return 0;
+}
+
 int main(int argc, char *argv[]) {
   const char *short_opts = "h?";
   const struct option long_opts[] = {
@@ -382,6 +388,9 @@ int main(int argc, char *argv[]) {
       break;
     }
   }
+
+  init_hash_table(comment_table, INIT_COMMENT_TABLE_SIZE);
+  init_hash_table(lang_table, INIT_LANG_TABLE_SIZE);
 
   ini_parse_string(comment_definitions, build_comments_table, NULL);
   exit(EXIT_SUCCESS);

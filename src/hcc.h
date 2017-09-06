@@ -29,9 +29,9 @@ struct lang_comment_definition {
   struct comment **comments;
 };
 
-struct lang_comment_identity {
+struct lang_identity {
   char *pattern;
-  struct lang_comment_definition *lang_comment;
+  char *lang;
 };
 
 struct line_counter {
