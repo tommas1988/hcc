@@ -1,6 +1,8 @@
 #ifndef __HCC_H
 #define __HCC_H
 
+#include "sq_list.h"
+
 #define MAX_FTW_FD 10
 
 #define MAX_COMMENT_SIZE 50
@@ -8,6 +10,9 @@
 
 #define INIT_LANG_TABLE_SIZE 32
 #define INIT_COMMENT_TABLE_SIZE 32
+
+#define INIT_COMMENT_SIZE 32
+#define INIT_LANG_COMMENT_SIZE 8
 
 #define TRUE 1
 #define FALSE 0
@@ -26,12 +31,12 @@ struct comment {
 
 struct lang_comment_definition {
   char *lang;
-  struct comment **comments;
+  struct sq_list comments;
 };
 
-struct lang_identity {
+struct lang_lang_identity {
   char *pattern;
-  char *lang;
+  struct sq_list comment_defs;
 };
 
 struct line_counter {
