@@ -31,7 +31,19 @@ struct sq_list {
     (list)->current = 0;                        \
   } while (0)
 
+#define list_current (list)                     \
+  do {                                          \
+    if (list->current < list->next_free) {      \
+      return list->data[list->current];         \
+    }                                           \
+    return NULL;                                \
+  } while (0)
+
+#define list_next (list)                        \
+  do {                                          \
+    list->current++;                            \
+  } while (0)
+
 void list_append(struct sq_list *list, void *value);
-void *list_next(struct sq_list *list);
 
 #endif

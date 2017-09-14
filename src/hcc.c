@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <libgen.h>
-
+#include <fnmatch.h>
 #include <ftw.h>
 
 #include "../deps/inih/ini.h"
@@ -25,12 +25,38 @@
 
 static struct sq_list lang_pattern_list;
 static struct hash_table *lang_comment_table;
+static struct sq_list line_counter_list;
+
+static struct sq_list *find_comment_list(const char *filename, char *lang) {
+  struct lang_match_pattern *lang_pattern;
+
+  list_reset(&lang_pattern_list);
+  while (lang_pattern = (struct lang_match_pattern *) list_current(&lang_pattern_list)) {
+    if (0 == fnmatch(lang_pattern->pattern, filename, 0)) {
+      struct sq_list *comment_list;
+
+      comment_list = (struct sq_list *) hash_table_find(lang_comment_table, lang_pattern->lang);
+      if (!comment_list) {
+        error(EXIT_FAILURE, "Cannot find language: %s comment list", lang_pattern->lang);
+      }
+
+      *lang = lang_pattern->lang;
+
+      return comment_list;
+    }
+
+    list_next(&lang_pattern_list);
+  }
+
+  return NULL;
+}
 
 enum {
   COUNTER_COMMENT,
   COUNTER_BLANK,
   COUNTER_CODE,
 };
+
 #define update_counter(type, counter)           \
   do {                                          \
     switch (type) {                             \
@@ -50,47 +76,25 @@ enum {
 static void count_line(const char *filename) {
   int fd;
   char buf[MAX_COMMENT_SIZE + BUFFER_SIZE], *read_buf;
+  char *lang;
   ssize_t bytes_read, pos;
   boolean in_code = FALSE, in_comment = FALSE, match_end_comment = FALSE;
-  int filename_len;
-  struct lang_comment_list *comments;
-  struct comment_str *csp;
-  /* TODO: rename list_entry */
-  struct line_counter_list_entry *list_entry;
+  struct sq_list *comment_list;
+  struct comment *cp;
   struct line_counter *counter;
 
-  if (!(comments = get_lang_comment_list(filename))) {
-    /* count next file */
+  if (!(comment_list = find_comment_list(filename, &lang))) {
+    printf("No matched language found, skip count file: %s\n", filename);
     return;
   }
 
-  if (!(list_entry = malloc(sizeof(struct line_counter_list_entry)))) {
-    error("Cannot alloc counter");
-    exit(EXIT_FAILURE);
+  if (!(counter = malloc(sizeof(struct line_counter)))) {
+    error(EXIT_FAILURE, "Cannot alloc line_counter");
   }
-  list_entry->next = NULL;
-  counter = &list_entry->counter;
+  counter->filename = filename;
+  counter->lang = lang;
 
-  filename_len = strlen(filename);
-  if (filename_len > FILENAME_MAX) {
-    error("Too long file name");
-    exit(EXIT_FAILURE);
-  }
-
-  if (!(counter->filename = malloc(filename_len))) {
-    error("Cannot alloc filename");
-    exit(EXIT_FAILURE);
-  }
-
-  strncpy(counter->filename, filename, filename_len);
-  counter->lang = comments->lang;
-  if (!counter_list.head) {
-    counter_list.head = list_entry;
-    counter_list.tail = list_entry;
-  } else {
-    counter_list.tail->next = list_entry;
-    counter_list.tail = list_entry;
-  }
+  list_append(&line_counter_list, (void *) counter);
 
   fd = open(filename, O_RDONLY);
   if (fd == -1) {
@@ -117,12 +121,23 @@ static void count_line(const char *filename) {
         }
         pos++;
       } else if (in_comment) {
-        if (csp->end.len && csp->end.val[0] == read_buf[pos]) {
+        if (cp->end.len && cp->end.val[0] == read_buf[pos]) {
           int bytes_left = bytes_read - pos;
-          int len = bytes_left < csp->end.len ? bytes_left : csp->end.len;
+          int len = bytes_left < cp->end.len ? bytes_left : cp->end.len;
 
-          if (!strncmp(csp->end.val, read_buf + pos, len)) {
-            if (bytes_left < csp->end.len) { /* partial match */
+          if (!strncmp(cp->end.val, read_buf + pos, len)) {
+            if (bytes_left < cp->end.len) { /* partial match */
+#ifdef DEBUG
+              {
+                char buf[MAX_COMMENT_SIZE];
+                struct comment_str *str = &cp->end;
+
+                strncpy(buf, str->val, str->len);
+                buf[str->len] = '\0';
+
+                printf("Partial match with %s\n", buf);
+              }
+#endif
               strncpy(read_buf - len, read_buf + pos, len);
               pos = -len;
               break;            /* refill buffer */
@@ -138,7 +153,7 @@ static void count_line(const char *filename) {
 
           if (match_end_comment) {
             in_comment = match_end_comment = FALSE;
-          } else if (!csp->end.len) {   /* inline comment */
+          } else if (!cp->end.len) {   /* inline comment */
             in_comment = FALSE;
           }
 
@@ -156,12 +171,23 @@ static void count_line(const char *filename) {
           int bytes_left = bytes_read - pos, bytes_match = 0;
           int i = 0;
 
-          csp = comments->list[i];
-          while (csp) {
-            int len = bytes_left < csp->start.len ? bytes_left : csp->start.len;
-            if (!strncmp(csp->start.val, read_buf + pos, len)) {
+          while (cp = (struct comment *) list_current(comment_list)) {
+            int len = bytes_left < cp->start.len ? bytes_left : cp->start.len;
+
+            if (!strncmp(cp->start.val, read_buf + pos, len)) {
               bytes_match = len;
-              if (bytes_left < csp->start.len) { /* partial match */
+              if (bytes_left < cp->start.len) { /* partial match */
+#ifdef DEBUG
+                {
+                  char buf[MAX_COMMENT_SIZE];
+                  struct comment_str *str = &cp->start;
+
+                  strncpy(buf, str->val, str->len);
+                  buf[str->len] = '\0';
+
+                  printf("Partial match with %s\n", buf);
+                }
+#endif
                 strncpy(read_buf - len, read_buf + pos, len);
                 pos = -len;
               } else {
@@ -169,7 +195,7 @@ static void count_line(const char *filename) {
               }
               break;
             }
-            csp = comments->list[++i];
+            list_next(comment_list);
           }
 
           if (pos < 0) {        /* partial match, refill buffer */
@@ -196,15 +222,14 @@ static void usage() {
 }
 
 static void print_result() {
-  struct line_counter_list_entry *list_entry = counter_list.head;
   struct line_counter *counter;
 
-  while (list_entry) {
-    counter = &(list_entry->counter);
+  while (counter = (struct line_counter *) list_current(&line_counter_list)) {
     puts(counter->filename);
     puts(counter->lang);
     printf("\tCommnet line: %d\n\tBlank line: %d\n\tCode line: %d\n", counter->comment_lines, counter->blank_lines, counter->code_lines);
-    list_entry = list_entry->next;
+
+    list_next(&line_counter_list);
   }
 }
 
@@ -294,26 +319,25 @@ static int build_comment_def(void* unused, const char* lang, const char* name, c
 
 static void init_data_struct() {
   init_sq_list(&lang_pattern_list, INIT_PATTERN_LIST_SIZE);
+  init_sq_list(&line_counter_list, INIT_LINE_COUNTER_LIST_SIZE);
   init_hash_table(lang_comment_table, INIT_LANG_COMMENT_TABLE_SIZE);
 }
 
 static void display_lang_comment_match_pattern() {
   struct lang_match_pattern *lang_pattern;
 
-  list_reset(&lang_pattern_list);
-  lang_pattern = (lang_match_pattern *) list_next(&lang_pattern_list);
-
   puts("LANGUAGE\tPATTERN\tCOMMENT");
 
-  while (pattern) {
+  list_reset(&lang_pattern_list);
+  while (lang_pattern = (struct lang_match_pattern *) list_current(&lang_pattern_list)) {
     struct sq_list *comment_list;
     struct comment *comment;
 
     printf("%s\t%s", lang_pattern->lang, lang_pattern->pattern);
 
     comment_list = (struct sq_list *) hash_table_find(lang_comment_table, lang_pattern->lang);
-    comment = (struct comment *) list_next(comment_list);
-    while (comment) {
+
+    while (comment = (struct comment *) list_current(comment_list)) {
       char buf[MAX_COMMENT_SIZE];
       int len;
 
@@ -333,8 +357,12 @@ static void display_lang_comment_match_pattern() {
       } else {
         printf(", %s", buf);
       }
+
+      list_next(comment_list);
     }
     putchar('\n');
+
+    list_next(&lang_pattern_list);
   }
 }
 

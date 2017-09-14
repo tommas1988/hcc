@@ -15,11 +15,3 @@ void list_append(struct sq_list *list, void *value) {
 
   list->data[list->next_free++] = value;
 }
-
-void *list_next(struct sq_list *list) {
-  if (list->current < list->next_free) {
-    return list->data[list->current++];
-  }
-
-  return NULL;
-}

@@ -10,6 +10,7 @@
 #define BUFFER_SIZE (16 * 1024)
 
 #define INIT_PATTERN_LIST_SIZE 32
+#define INIT_LINE_COUNTER_LIST_SIZE 32
 #define INIT_LANG_COMMENT_TABLE_SIZE 32
 #define INIT_LANG_COMMENT_LIST_SIZE 8
 
@@ -34,21 +35,11 @@ struct lang_match_pattern {
 };
 
 struct line_counter {
-  char *filename;
+  const char *filename;
   char *lang;
   int comment_lines;
   int blank_lines;
   int code_lines;
-};
-
-struct line_counter_list_entry {
-  struct line_counter counter;
-  struct line_counter_list_entry *next;
-};
-
-struct line_counter_list {
-  struct line_counter_list_entry *head;
-  struct line_counter_list_entry *tail;
 };
 
 #endif
