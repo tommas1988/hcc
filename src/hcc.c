@@ -323,7 +323,7 @@ static void init_data_struct() {
   init_hash_table(lang_comment_table, INIT_LANG_COMMENT_TABLE_SIZE);
 }
 
-static void display_lang_comment_match_pattern() {
+static void display_comment_def_details() {
   struct lang_match_pattern *lang_pattern;
 
   puts("LANGUAGE\tPATTERN\tCOMMENT");
@@ -366,22 +366,26 @@ static void display_lang_comment_match_pattern() {
   }
 }
 
+enum {
+  COMMENT_DEF_DETAIL = CHAR_MAX + 1
+};
+
+static const struct option long_opts[] = {
+  { "comment-def-detail", no_argument, NULL, COMMENT_DEF_DETAIL },
+  { "help", no_argument, NULL, 'h' },
+  { NULL, 0, NULL, 0 },
+};
+
 int main(int argc, char *argv[]) {
-  const char *short_opts = "h?";
-  const struct option long_opts[] = {
-    { "match-pattern", no_argument, NULL, 'P' },
-    { "help", no_argument, NULL, 'h' },
-    { NULL, 0, NULL, 0 },
-  };
   int opt, i;
   char pathname[PATH_MAX + 1];
-  boolean show_match_pattern = FALSE;
+  boolean show_comment_defs = FALSE;
   struct stat sb;
 
-  while ((opt = getopt_long(argc, argv, short_opts, long_opts, NULL)) != -1) {
+  while ((opt = getopt_long(argc, argv, "h?", long_opts, NULL)) != -1) {
     switch (opt) {
-    case 'P':
-      show_match_pattern = TRUE;
+    case COMMENT_DEF_DETAIL:
+      show_comment_defs = TRUE;
       break;
     case 'h':
     case '?':
@@ -395,8 +399,8 @@ int main(int argc, char *argv[]) {
 
   ini_parse_string(comment_def_confg, build_comment_def, NULL);
 
-  if (show_match_pattern) {
-    display_lang_comment_match_pattern();
+  if (show_comment_defs) {
+    display_comment_def_details();
     exit(EXIT_SUCCESS);
   }
 
