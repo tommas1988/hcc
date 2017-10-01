@@ -1,5 +1,5 @@
 #! /bin/sh
-cat src/comment_def_config.ini |
+cat comment_def_config.ini |
     sed 's/\\/\\\\/' | sed 's/\"/\\\"/' | sed "s/'/\\'/" |
     awk '
 BEGIN {
@@ -13,5 +13,5 @@ BEGIN {
 END {
         print out ";"
 }
-' > src/comment_def_config.c
+' > comment_def_config.c
 

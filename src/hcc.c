@@ -14,7 +14,7 @@
 #include <fnmatch.h>
 #include <ftw.h>
 
-#include "../deps/inih/ini.h"
+#include "ini.h"
 
 #include "error.h"
 #include "sq_list.h"
