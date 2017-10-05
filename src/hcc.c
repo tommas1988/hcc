@@ -23,15 +23,24 @@
 
 #include "comment_def_config.c"
 
+static boolean show_comment_defs = FALSE;
+static boolean verbose = FALSE;
+static struct {
+  int lang;
+  int pattern;
+  int comment;
+  int filename;
+} field_width;
+
 static struct sq_list lang_pattern_list;
 static struct hash_table *lang_comment_table;
 static struct sq_list line_counter_list;
 
-static struct sq_list *find_comment_list(const char *filename, char *lang) {
+static struct sq_list *find_comment_list(const char *filename, char **lang) {
   struct lang_match_pattern *lang_pattern;
 
   list_reset(&lang_pattern_list);
-  while (lang_pattern = (struct lang_match_pattern *) list_current(&lang_pattern_list)) {
+  while ((lang_pattern = (struct lang_match_pattern *) list_current(&lang_pattern_list))) {
     if (0 == fnmatch(lang_pattern->pattern, filename, 0)) {
       struct sq_list *comment_list;
 
@@ -70,45 +79,18 @@ enum {
       (counter)->code_lines++;                  \
       break;                                    \
     }                                           \
-  } while (0)                                   \
+  } while (0)
 
-
-static void count_line(const char *filename) {
-  int fd;
-  char buf[MAX_COMMENT_SIZE + BUFFER_SIZE], *read_buf;
-  char *lang;
+static void count_line(int fd, struct sq_list *comment_list, struct line_counter *counter) {
+  char buf[MAX_COMMENT_SIZE + BUFFER_SIZE], *read_buf;  
   ssize_t bytes_read, pos;
-  boolean in_code = FALSE, in_comment = FALSE, match_end_comment = FALSE;
-  struct sq_list *comment_list;
+  boolean in_code = FALSE, in_comment = FALSE, end_comment = FALSE;
   struct comment *cp;
-  struct line_counter *counter;
-
-  if (!(comment_list = find_comment_list(filename, &lang))) {
-    printf("No matched language found, skip count file: %s\n", filename);
-    return;
-  }
-
-  if (!(counter = malloc(sizeof(struct line_counter)))) {
-    error(EXIT_FAILURE, "Cannot alloc line_counter");
-  }
-  counter->filename = filename;
-  counter->lang = lang;
-
-  list_append(&line_counter_list, (void *) counter);
-
-  fd = open(filename, O_RDONLY);
-  if (fd == -1) {
-    error("Cannot open file: %s", filename);
-    exit(EXIT_FAILURE);
-  }
-
-  posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
 
   read_buf = &buf[MAX_COMMENT_SIZE];
   while ((bytes_read = read(fd, read_buf, BUFFER_SIZE))) {
     if (bytes_read == -1) {
-      error("Read file %s error", filename);
-      exit(EXIT_FAILURE);
+      error(EXIT_FAILURE, "Read file %s error", counter->filename);
     }
 
     pos = pos < 0 ? pos : 0;
@@ -121,7 +103,7 @@ static void count_line(const char *filename) {
         }
         pos++;
       } else if (in_comment) {
-        if (cp->end.len && cp->end.val[0] == read_buf[pos]) {
+        if (cp->end.len && cp->end.val[0] == read_buf[pos]) { /* comment block and first end comment char is match with current pos */
           int bytes_left = bytes_read - pos;
           int len = bytes_left < cp->end.len ? bytes_left : cp->end.len;
 
@@ -143,35 +125,39 @@ static void count_line(const char *filename) {
               break;            /* refill buffer */
             }
 
+            end_comment = TRUE;
             pos += len;
-            match_end_comment = TRUE;
           } else {
             pos++;
           }
         } else if (read_buf[pos] == '\n') {
           update_counter(COUNTER_COMMENT, counter);
 
-          if (match_end_comment) {
-            in_comment = match_end_comment = FALSE;
+          if (end_comment) {
+            in_comment = end_comment = FALSE;
           } else if (!cp->end.len) {   /* inline comment */
             in_comment = FALSE;
           }
 
           pos++;
-        } else if (isspace(read_buf[pos])) { /* not a space charactor */
-          in_code = TRUE;
-          in_comment = match_end_comment = FALSE;
+        } else if (!isspace(read_buf[pos])) { /* not a space charactor */
+          if (end_comment) {                  /* when non-space charactor follows then end of comment, re-check */
+            in_comment = end_comment = FALSE;
+          } else {
+            pos++;
+          }
+        } else {
           pos++;
         }
       } else {
         if (read_buf[pos] == '\n') {
           update_counter(COUNTER_BLANK, counter);
           pos++;
-        } else if (isspace(read_buf[pos])) { /* not space charactor */
+        } else if (!isspace(read_buf[pos])) { /* not space charactor */
           int bytes_left = bytes_read - pos, bytes_match = 0;
-          int i = 0;
 
-          while (cp = (struct comment *) list_current(comment_list)) {
+          list_reset(comment_list);
+          while ((cp = (struct comment *) list_current(comment_list))) {
             int len = bytes_left < cp->start.len ? bytes_left : cp->start.len;
 
             if (!strncmp(cp->start.val, read_buf + pos, len)) {
@@ -202,38 +188,69 @@ static void count_line(const char *filename) {
             break;
           }
 
+          if (!in_comment) {    /* not start of comment block */
+            in_code = TRUE;
+          }
+
           pos += (bytes_match ? bytes_match : 1);
+        } else {                /* is white space charactor */
+          pos++;
         }
       }
     }
   }
 }
 
+static void scan_file(const char *filename) {
+  int fd;
+  char *lang, *pathname;
+  int len;
+  struct sq_list *comment_list;
+  struct line_counter *counter;
+
+  if (!(comment_list = find_comment_list(filename, &lang))) {
+    fprintf(stderr, "No matched language found, skip count file: %s\n", filename);
+    return;
+  }
+
+  if (!(counter = malloc(sizeof(struct line_counter)))) {
+    error(EXIT_FAILURE, "Cannot alloc line_counter");
+  }
+
+  len = strlen(filename);
+  if (!(pathname = malloc(len + 1))) {
+    error(EXIT_FAILURE, "Cannot alloc pathname");
+  }
+
+  if (verbose) {
+    field_width.filename = len;
+  }
+
+  strncpy(pathname, filename, len);
+  pathname[len] = '\0';
+  counter->filename = pathname;
+  counter->lang = lang;
+
+  list_append(&line_counter_list, (void *) counter);
+
+  fd = open(filename, O_RDONLY);
+  if (fd == -1) {
+    error(EXIT_FAILURE, "Cannot open file: %s", filename);
+  }
+
+  posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+
+  count_line(fd, comment_list, counter);
+}
+
 static int count_for_file(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
   if (typeflag == FTW_F) {
-    count_line(fpath);
+    scan_file(fpath);
   }
   return 0;
 }
 
-static void usage() {
-  puts("Usage: hcc [OPTION]... [FILE]...");
-  puts("Count the actual code lines in each file");
-}
-
-static void print_result() {
-  struct line_counter *counter;
-
-  while (counter = (struct line_counter *) list_current(&line_counter_list)) {
-    puts(counter->filename);
-    puts(counter->lang);
-    printf("\tCommnet line: %d\n\tBlank line: %d\n\tCode line: %d\n", counter->comment_lines, counter->blank_lines, counter->code_lines);
-
-    list_next(&line_counter_list);
-  }
-}
-
-#define lang_str_cpy (dest, lang_str)                   \
+#define lang_str_cpy(dest, lang_str)                    \
   do {                                                  \
     (dest) = malloc(MAX_LANG_SIZE + 1);                 \
     if (!(dest)) {                                      \
@@ -243,11 +260,14 @@ static void print_result() {
     strncpy((dest), (lang_str), MAX_LANG_SIZE + 1);     \
   } while (0)
 
-static void create_comment_list(bucket *bktp, const char *key) {
+static void create_comment_list(struct bucket *bktp, const char *key) {
   char *lang_key;
   struct sq_list *comment_list;
 
-  comment_list = malloc(sizeof(struct sq_list));
+  if (!(comment_list = malloc(sizeof(struct sq_list)))) {
+    error(EXIT_FAILURE, "Cannot alloc comment list");
+  }
+
   init_sq_list(comment_list, INIT_LANG_COMMENT_LIST_SIZE);
 
   lang_str_cpy(lang_key, key);
@@ -255,28 +275,36 @@ static void create_comment_list(bucket *bktp, const char *key) {
   bktp->value = comment_list;
 }
 
-static comment *create_comment_from_string(const char *str) {
+static struct comment *create_comment_from_string(const char *str) {
   struct comment *comment;
-  char *p;
+  int str_len;
+  char *cpy, *p;
 
-  comment = malloc(sizeof(struct comment));
-  if (!comment) {
+  str_len = strlen(str);
+
+  if (!(cpy = malloc(str_len))) {
+    error(EXIT_FAILURE, "Cannot alloc comment string");
+  }
+
+  if (!(comment = malloc(sizeof(struct comment)))) {
     error(EXIT_FAILURE, "Cannot alloc comment");
   }
 
+  strncpy(cpy, str, str_len);
+
   /* TODO: trim leading & trailing space charactors first */
 
-  p = strchr(str, ' ');
+  p = strchr(cpy, ' ');
   if (p) {
-    int start_len = p - str;
+    int start_len = p - cpy;
 
     comment->start.len = start_len;
-    comment->start.val = str;
-    comment->end.len = strlen(str) - start_len - 1;
+    comment->start.val = cpy;
+    comment->end.len = str_len - start_len - 1;
     comment->end.val = p + 1;
   } else {
-    comment->start.len = strlen(str);
-    comment->start.val = str;
+    comment->start.len = str_len;
+    comment->start.val = cpy;
     comment->end.len = 0;
     comment->end.val = NULL;
   }
@@ -284,11 +312,12 @@ static comment *create_comment_from_string(const char *str) {
   return comment;
 }
 
-#define strtolower (str)                        \
+#define strtolower(str)                         \
   do {                                          \
-    while ((*str)) {                            \
-      (*str) = tolower((*str));                 \
-      str++;                                    \
+    char *p = str;                              \
+    while ((*p)) {                              \
+      (*p) = tolower((*p));                     \
+      p++;                                      \
     }                                           \
   } while (0)
 
@@ -300,44 +329,81 @@ static int build_comment_def(void* unused, const char* lang, const char* name, c
 
   strtolower(clang);
 
-  if (!strcmp(name, "pattern")) {
-    char *lang_key;
+  if (show_comment_defs) {
+    field_width.lang = strlen(clang);
+  }
 
-    lang_str_cpy(lang_key, clang);
-    list_append(&lang_pattern_list, lang_key);
+  if (!strcmp(name, "pattern")) {
+    struct lang_match_pattern *lang_pattern;
+    char *buf, *pattern;
+    int len;
+
+    if (!(lang_pattern = malloc(sizeof(struct lang_match_pattern)))) {
+      error(EXIT_FAILURE, "Cannot alloc lang match pattern");
+    }
+
+    len = strlen(value);
+    if (!(pattern = malloc(sizeof(len + 1)))) {
+      error(EXIT_FAILURE, "Cannot alloc pattern string");
+    }
+
+    lang_str_cpy(buf, clang);
+    strncpy(pattern, value, len);
+    pattern[len+1] = '\0';
+
+    lang_pattern->lang = buf;
+    lang_pattern->pattern = pattern;
+
+    list_append(&lang_pattern_list, lang_pattern);
+
+    if (show_comment_defs) {
+      field_width.pattern = len;
+    }
   } else if (!strcmp(name, "comment")) {
     struct sq_list *comment_list;
 
     comment_list = (struct sq_list *) hash_table_find_with_add(lang_comment_table, clang, create_comment_list);
     list_append(comment_list, (void *) create_comment_from_string(value));
+
+    if (show_comment_defs) {
+      field_width.comment = strlen(value);
+    }
   } else {
     error(EXIT_FAILURE, "Unknown comment definition field name");
   }
 
-  return 0;
+  return 1;
 }
 
-static void init_data_struct() {
-  init_sq_list(&lang_pattern_list, INIT_PATTERN_LIST_SIZE);
-  init_sq_list(&line_counter_list, INIT_LINE_COUNTER_LIST_SIZE);
-  init_hash_table(lang_comment_table, INIT_LANG_COMMENT_TABLE_SIZE);
-}
-
-static void display_comment_def_details() {
+static void display_comment_defs_detail() {
   struct lang_match_pattern *lang_pattern;
+  int lang_width, pattern_width, comment_width;
+  char *format;
 
-  puts("LANGUAGE\tPATTERN\tCOMMENT");
+  lang_width = (sizeof("LANGUAGE") > field_width.lang ? sizeof("LANGUAGE") : field_width.lang) + GAP_WIDTH;
+  pattern_width = (sizeof("PATTERN") > field_width.pattern ? sizeof("PATTERN") : field_width.pattern) + GAP_WIDTH;
+  comment_width = sizeof("COMMENT") > field_width.comment ? sizeof("COMMENT") : field_width.comment;
+
+  if (!(format = malloc(lang_width + pattern_width + comment_width + 1))) {
+    error(EXIT_FAILURE, "Cannot alloc format string buffer");
+  }
+
+  format[lang_width+pattern_width+comment_width] = '\0';
+  if (0 > sprintf(format, "%%-%ds%%-%ds%%-%ds\n", lang_width, pattern_width, comment_width)) {
+    error(EXIT_FAILURE, "Cannot generat format string");
+  }
+
+  printf(format, "LANGUAGE", "PATTERN", "COMMENT");
 
   list_reset(&lang_pattern_list);
-  while (lang_pattern = (struct lang_match_pattern *) list_current(&lang_pattern_list)) {
+  while ((lang_pattern = (struct lang_match_pattern *) list_current(&lang_pattern_list))) {
     struct sq_list *comment_list;
     struct comment *comment;
 
-    printf("%s\t%s", lang_pattern->lang, lang_pattern->pattern);
-
     comment_list = (struct sq_list *) hash_table_find(lang_comment_table, lang_pattern->lang);
 
-    while (comment = (struct comment *) list_current(comment_list)) {
+    list_reset(comment_list);
+    while ((comment = (struct comment *) list_current(comment_list))) {
       char buf[MAX_COMMENT_SIZE];
       int len;
 
@@ -345,6 +411,8 @@ static void display_comment_def_details() {
       strncpy(buf, comment->start.val, len);
 
       if (comment->end.len) {
+        buf[len] = ' ';
+
         len++;
         strncpy(buf + len, comment->end.val, comment->end.len);
         len += comment->end.len;
@@ -353,37 +421,139 @@ static void display_comment_def_details() {
       buf[len] = '\0';
 
       if (comment_list->current == 0) {
-        printf("\t%s", buf);
+        printf(format, lang_pattern->lang, lang_pattern->pattern, buf);
       } else {
-        printf(", %s", buf);
+        printf(format, "", "", buf);
       }
 
       list_next(comment_list);
     }
-    putchar('\n');
 
     list_next(&lang_pattern_list);
   }
 }
 
+static void create_line_counter(struct bucket *bktp, const char *key) {
+  char *lang_key;
+  struct line_counter *counter;
+
+  if (!(counter = calloc(1, sizeof(struct line_counter)))) {
+    error(EXIT_FAILURE, "Cannot alloc line counter");
+  }
+
+  lang_str_cpy(lang_key, key);
+  bktp->key = lang_key;
+  bktp->value = counter;
+}
+
+static void print_result() {
+  struct line_counter *file_counter, *lang_counter;
+  struct line_counter total_counter;
+  struct hash_table *line_counter_table;
+  int lang_width, blank_width, code_width, comment_width;
+  char *format;
+
+  lang_width = (sizeof("LANGUAGE") > field_width.lang ? sizeof("LANGUAGE") : field_width.lang) + GAP_WIDTH;
+  code_width = sizeof("CODE LINES") + GAP_WIDTH;
+  comment_width = sizeof("COMMENT LINES") + GAP_WIDTH;
+  blank_width = sizeof("BLANK LINES");
+
+  if (!(format = malloc(lang_width + code_width + comment_width + blank_width + 1))) {
+    error(EXIT_FAILURE, "Cannot alloc format string buffer");
+  }
+
+  format[lang_width+code_width+comment_width+blank_width] = '\0';
+
+  /* header format string */
+  if (0 > sprintf(format, "%%-%ds%%-%ds%%-%ds%%-%ds\n", lang_width, code_width, comment_width, blank_width)) {
+    error(EXIT_FAILURE, "Cannot generate header format string");
+  }
+
+  printf(format, "LANGUAGE", "CODE LINES", "COMMENT LINES", "BLANK LINES");
+
+  /* body format string */
+  if (0 > sprintf(format, "%%-%ds%%-%dd%%-%dd%%-%dd\n", lang_width, code_width, comment_width, blank_width)) {
+    error(EXIT_FAILURE, "Cannot generate body format string");
+  }
+
+  init_hash_table(&line_counter_table, 8);
+
+  list_reset(&line_counter_list);
+  while ((file_counter = (struct line_counter *) list_current(&line_counter_list))) {
+    lang_counter = (struct line_counter *) hash_table_find_with_add(line_counter_table, file_counter->lang, create_line_counter);
+    lang_counter->lang = file_counter->lang;
+    lang_counter->blank_lines += file_counter->blank_lines;
+    lang_counter->code_lines += file_counter->code_lines;
+    lang_counter->comment_lines += file_counter->comment_lines;
+
+    if (verbose) {
+      puts(file_counter->filename);
+      printf(format, file_counter->lang, file_counter->code_lines, file_counter->comment_lines, file_counter->blank_lines);
+    }
+
+    list_next(&line_counter_list);
+  }
+
+  if (verbose) {
+    puts("");
+  }
+
+  total_counter.blank_lines = 0;
+  total_counter.code_lines = 0;
+  total_counter.comment_lines = 0;
+  hash_table_reset(line_counter_table);
+  while ((lang_counter = (struct line_counter *) hash_table_current(line_counter_table))) {
+    total_counter.blank_lines += lang_counter->blank_lines;
+    total_counter.code_lines += lang_counter->code_lines;
+    total_counter.comment_lines += lang_counter->comment_lines;
+
+    printf(format, lang_counter->lang, lang_counter->code_lines, lang_counter->comment_lines, lang_counter->blank_lines);
+
+    hash_table_next(line_counter_table);
+  }
+
+  printf(format, "", total_counter.code_lines, total_counter.comment_lines, total_counter.blank_lines);
+}
+
+static void usage() {
+  puts("Usage: hcc [OPTION]... [FILE]...");
+  puts("Count the actual code lines in each file");
+}
+
+static void init_data_struct() {
+  init_sq_list(&lang_pattern_list, INIT_PATTERN_LIST_SIZE);
+  init_sq_list(&line_counter_list, INIT_LINE_COUNTER_LIST_SIZE);
+  init_hash_table(&lang_comment_table, INIT_LANG_COMMENT_TABLE_SIZE);
+}
+
 enum {
-  COMMENT_DEF_DETAIL = CHAR_MAX + 1
+  COMMENT_DEF_DETAIL = CHAR_MAX + 1,
+  VERSION,
+  EXCLUDE,
+  EXCLUDE_FILE
 };
 
 static const struct option long_opts[] = {
-  { "comment-def-detail", no_argument, NULL, COMMENT_DEF_DETAIL },
+  { "custom-comment-defs", required_argument, NULL, 'c' },
+  { "comment-defs-detail", no_argument, NULL, COMMENT_DEF_DETAIL },
+  { "exclude", required_argument, NULL, EXCLUDE },
+  { "exclude-file", required_argument, NULL, EXCLUDE_FILE },
+  { "verbose", no_argument, NULL, 'v' },
+  { "version", no_argument, NULL, VERSION },
   { "help", no_argument, NULL, 'h' },
   { NULL, 0, NULL, 0 },
 };
 
 int main(int argc, char *argv[]) {
-  int opt, i;
+  int opt, i, parse_ret;
   char pathname[PATH_MAX + 1];
-  boolean show_comment_defs = FALSE;
   struct stat sb;
 
-  while ((opt = getopt_long(argc, argv, "h?", long_opts, NULL)) != -1) {
+  while ((opt = getopt_long(argc, argv, "cvh?", long_opts, NULL)) != -1) {
     switch (opt) {
+    case 'v':
+      verbose = TRUE;
+      break;
     case COMMENT_DEF_DETAIL:
       show_comment_defs = TRUE;
       break;
@@ -397,10 +567,15 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  ini_parse_string(comment_def_confg, build_comment_def, NULL);
+  init_data_struct();
+
+  parse_ret = ini_parse_string(comment_def_config, build_comment_def, NULL);
+  if (parse_ret) {
+    error(EXIT_FAILURE, "parse ini string error: %d\nini string:\n%s\n", parse_ret, comment_def_config);
+  }
 
   if (show_comment_defs) {
-    display_comment_def_details();
+    display_comment_defs_detail();
     exit(EXIT_SUCCESS);
   }
 
@@ -409,8 +584,6 @@ int main(int argc, char *argv[]) {
     usage();
     exit(EXIT_FAILURE);
   }
-
-  build_lang_comment_list_table();
 
   for (i = optind; argv[i]; i++) {
     if (!realpath(argv[i], pathname)) {
@@ -424,10 +597,13 @@ int main(int argc, char *argv[]) {
 
     switch (sb.st_mode & S_IFMT) {
     case S_IFREG:
-      count_line(pathname);
+      scan_file(pathname);
       break;
     case S_IFDIR:
+#ifdef DEBUG
       printf("scan from dir: %s\n", pathname);
+#endif
+
       if (nftw(pathname, count_for_file, MAX_FTW_FD, 0)) {
         fputs("Fatal: file tree walk failed", stderr);
         exit(EXIT_FAILURE);

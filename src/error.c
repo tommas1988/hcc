@@ -1,6 +1,8 @@
-#include "error.h";
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
+
+#include "error.h"
 
 void error(int status, const char *format, ...) {
   va_list var_arg;

@@ -36,11 +36,15 @@ static struct bucket *hash_table_find_bucket(struct hash_table *ht, const char *
   for (i = 0; i < ht->size; i++) {
     idx = hash_func(ht, hash, i);
     bktp = &ht->buckets[idx];
-    if (bktp->key[0] == '\0') { /* not insert value yet */
-      *is_empty = 1;
+    if (bktp->key == '\0') { /* not insert value yet */
+      if (is_empty) {
+        *is_empty = 1;
+      }
       return bktp;
     } else if (!strcmp(key, bktp->key)) {
-      *is_empty = 0;
+      if (is_empty) {
+        *is_empty = 0;
+      }
       return bktp;
     }
   }
@@ -51,19 +55,38 @@ static struct bucket *hash_table_find_bucket(struct hash_table *ht, const char *
 static struct hash_table *rehash(struct hash_table *ht) {
   unsigned int size = ht->size << 1;
   struct hash_table *nht;
-  struct bucket *bktp;
+  struct bucket *bktp, *nbktp;
   unsigned int i;
 
-  init_hash_table(nht, size);
+  init_hash_table(&nht, size);
 
   for (i = 0; i < ht->size; i++) {
-    bktp = &ht->buckets;
-    if (bktp->key[0] != '\0') {
-      hash_table_add(nht, bktp->key, bktp->value);
+    bktp = &ht->buckets[i];
+    if (bktp->key != '\0') {
+      nbktp = hash_table_find_bucket(nht, bktp->key, NULL);
+
+      nbktp->key = bktp->key;
+      nbktp->value = bktp->value;
+      nht->free--;
     }
   }
 
   free(ht);
+
+  return nht;
+}
+
+void init_hash_table(struct hash_table **ht, unsigned int size) {
+    /* size must be non-zere and power of 2 */
+    assert((size != 0) && ((size & (~size + 1)) == size));
+
+    *ht = calloc(1, sizeof(struct hash_table) + sizeof(struct bucket) * size);
+    if (!*ht) {
+      error(EXIT_FAILURE, "Cannot allocate hash table");
+    }
+
+    (*ht)->size = size;
+    (*ht)->free = size;
 }
 
 void *hash_table_find_with_add(struct hash_table *ht, const char *key, hash_table_bucket_init init_func) {
@@ -82,7 +105,22 @@ void *hash_table_find_with_add(struct hash_table *ht, const char *key, hash_tabl
       rehash(ht);
     }
 
+    /* TODO: rename hash_table_bucket_init to hash_table_init_bucket_value
+     * and set bucket key here to avoid redundant codes */
     init_func(bktp, key);
     ht->free--;
+
+    return bktp->value;
   }
+}
+
+void *hash_table_current(struct hash_table *ht) {
+  while (ht->current < ht->size) {
+    if (ht->buckets[ht->current].key) {
+      return ht->buckets[ht->current].value;
+    }
+    ht->current++;
+  }
+
+  return NULL;  
 }

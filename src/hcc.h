@@ -14,6 +14,8 @@
 #define INIT_LANG_COMMENT_TABLE_SIZE 32
 #define INIT_LANG_COMMENT_LIST_SIZE 8
 
+#define GAP_WIDTH 4
+
 #define TRUE 1
 #define FALSE 0
 
@@ -35,11 +37,14 @@ struct lang_match_pattern {
 };
 
 struct line_counter {
-  const char *filename;
+  char *filename;
   char *lang;
   int comment_lines;
   int blank_lines;
   int code_lines;
+#ifdef DEBUG
+  long int line_type_info;
+#endif
 };
 
 #endif

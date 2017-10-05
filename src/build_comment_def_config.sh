@@ -7,7 +7,7 @@ BEGIN {
 }
 {
         if ($0 != "") {
-           out = out sprintf("\n  \"%s\"", $0);
+           out = out sprintf("\n  \"%s\\n\"", $0);
         }
 }
 END {
