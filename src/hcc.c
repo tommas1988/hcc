@@ -32,6 +32,10 @@ static struct {
   int filename;
 } field_width;
 
+#ifdef DEBUG
+static boolean debug = FALSE;
+#endif
+
 static struct sq_list lang_pattern_list;
 static struct hash_table *lang_comment_table;
 static struct sq_list line_counter_list;
@@ -82,7 +86,7 @@ enum {
   } while (0)
 
 static void count_line(int fd, struct sq_list *comment_list, struct line_counter *counter) {
-  char buf[MAX_COMMENT_SIZE + BUFFER_SIZE], *read_buf;  
+  char buf[MAX_COMMENT_SIZE + BUFFER_SIZE], *read_buf;
   ssize_t bytes_read, pos;
   boolean in_code = FALSE, in_comment = FALSE, end_comment = FALSE;
   struct comment *cp;
@@ -94,7 +98,7 @@ static void count_line(int fd, struct sq_list *comment_list, struct line_counter
     }
 
     pos = pos < 0 ? pos : 0;
-    while (pos >= 0 && pos < bytes_read) {
+    while (pos < bytes_read) {
       if (in_code) {
         if (read_buf[pos] == '\n') {
           update_counter(COUNTER_CODE, counter);
@@ -122,6 +126,7 @@ static void count_line(int fd, struct sq_list *comment_list, struct line_counter
 #endif
               strncpy(read_buf - len, read_buf + pos, len);
               pos = -len;
+
               break;            /* refill buffer */
             }
 
@@ -179,17 +184,18 @@ static void count_line(int fd, struct sq_list *comment_list, struct line_counter
               } else {
                 in_comment = TRUE;
               }
+
               break;
             }
             list_next(comment_list);
           }
 
-          if (pos < 0) {        /* partial match, refill buffer */
-            break;
-          }
-
-          if (!in_comment) {    /* not start of comment block */
-            in_code = TRUE;
+          if (!in_comment) {
+            if (pos < 0) {      /* partial match, refill buffer */
+              break;
+            } else {
+              in_code = TRUE;
+            }
           }
 
           pos += (bytes_match ? bytes_match : 1);
@@ -527,42 +533,61 @@ static void init_data_struct() {
 }
 
 enum {
-  COMMENT_DEF_DETAIL = CHAR_MAX + 1,
-  VERSION,
-  EXCLUDE,
-  EXCLUDE_FILE
+  COMMENT_DEFS_DETAIL_OPTION = CHAR_MAX + 1,
+#ifdef DEBUG
+  DEBUG_OPTION,
+  PARTIAL_TEST_BUF_SIZE_OPTION,
+#endif
+  EXCLUDE_OPTION,
+  EXCLUDE_FILE_OPTION,
+  VERSION_OPTION,
 };
 
 static const struct option long_opts[] = {
   { "custom-comment-defs", required_argument, NULL, 'c' },
-  { "comment-defs-detail", no_argument, NULL, COMMENT_DEF_DETAIL },
-  { "exclude", required_argument, NULL, EXCLUDE },
-  { "exclude-file", required_argument, NULL, EXCLUDE_FILE },
+  { "comment-defs-detail", no_argument, NULL, COMMENT_DEFS_DETAIL_OPTION },
+#ifdef DEBUG
+  { "debug", no_argument, NULL, DEBUG_OPTION },
+#endif
+  { "exclude", required_argument, NULL, EXCLUDE_OPTION },
+  { "exclude-file", required_argument, NULL, EXCLUDE_FILE_OPTION },
   { "verbose", no_argument, NULL, 'v' },
-  { "version", no_argument, NULL, VERSION },
+  { "version", no_argument, NULL, VERSION_OPTION },
   { "help", no_argument, NULL, 'h' },
   { NULL, 0, NULL, 0 },
 };
 
 int main(int argc, char *argv[]) {
   int opt, i, parse_ret;
-  char pathname[PATH_MAX + 1];
+  char pathname[PATH_MAX+1];
+  boolean has_custom_comment_defs = FALSE;
+  char comment_defs_file[PATH_MAX+1];
   struct stat sb;
 
   while ((opt = getopt_long(argc, argv, "cvh?", long_opts, NULL)) != -1) {
     switch (opt) {
+    case 'c':
+      has_custom_comment_defs = TRUE;
+      strcpy(comment_defs_file, optarg);
+      break;
+    case COMMENT_DEFS_DETAIL_OPTION:
+      show_comment_defs = TRUE;
+      break;
+#ifdef DEBUG
+    case DEBUG_OPTION:
+      debug = TRUE;
+      break;
+#endif
     case 'v':
       verbose = TRUE;
       break;
-    case COMMENT_DEF_DETAIL:
-      show_comment_defs = TRUE;
-      break;
     case 'h':
     case '?':
+      /* TODO: test option errors */
       usage();
       break;
     default:
-      /* never reach to this place */
+      error(EXIT_FAILURE, "unknown option: %d", opt);
       break;
     }
   }

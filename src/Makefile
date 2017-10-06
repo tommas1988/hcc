@@ -8,6 +8,11 @@ HCC = $(ROOT)/out/hcc
 
 ifeq ($(DEBUG), yes)
 	CFLAGS += -g -ggdb -DDEBUG
+
+ifdef BUFFER_SIZE
+	CFLAGS += -DBUFFER_SIZE=$(BUFFER_SIZE)
+endif
+
 endif
 
 all: $(HCC)

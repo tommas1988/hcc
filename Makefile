@@ -1,6 +1,6 @@
 # Top level makefile
 
-export DEBUG
+export
 
 DEBUG = no
 

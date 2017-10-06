@@ -7,7 +7,10 @@
 
 #define MAX_LANG_SIZE 10
 #define MAX_COMMENT_SIZE 20
+
+#ifndef BUFFER_SIZE
 #define BUFFER_SIZE (16 * 1024)
+#endif
 
 #define INIT_PATTERN_LIST_SIZE 32
 #define INIT_LINE_COUNTER_LIST_SIZE 32
