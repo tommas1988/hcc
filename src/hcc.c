@@ -91,6 +91,31 @@ static void count_line(int fd, struct sq_list *comment_list, struct line_counter
   boolean in_code = FALSE, in_comment = FALSE, end_comment = FALSE;
   struct comment *cp;
 
+#ifdef DEBUG
+  int line_start_pos = 0;
+  int incomplete_line_len = 0;
+  char *incomplete_line_buf = NULL;
+
+#define print_scan_line(C)                                              \
+  do {                                                                  \
+    if (debug) {                                                        \
+      putchar(C);                                                       \
+      if (incomplete_line_len) {                                        \
+        if (!fwrite(incomplete_line_buf, 1, incomplete_line_len, stdout)) { \
+          error(EXIT_FAILURE, "Cannote write incomplete line buffer");  \
+        }                                                               \
+        incomplete_line_len = 0;                                        \
+      }                                                                 \
+      if (!fwrite(read_buf + line_start_pos, 1, pos - line_start_pos + 1, stdout)) { \
+        error(EXIT_FAILURE, "Cannot print debug line");                 \
+      }                                                                 \
+      line_start_pos = pos + 1;                                         \
+    }                                                                   \
+  } while (0)
+#else
+#define print_scan_line(c)
+#endif
+
   read_buf = &buf[MAX_COMMENT_SIZE];
   while ((bytes_read = read(fd, read_buf, BUFFER_SIZE))) {
     if (bytes_read == -1) {
@@ -104,6 +129,8 @@ static void count_line(int fd, struct sq_list *comment_list, struct line_counter
           update_counter(COUNTER_CODE, counter);
           /* set in_code to FALSE in order to test next line type */
           in_code = FALSE;
+
+          print_scan_line(' ');
         }
         pos++;
       } else if (in_comment) {
@@ -144,6 +171,8 @@ static void count_line(int fd, struct sq_list *comment_list, struct line_counter
             in_comment = FALSE;
           }
 
+          print_scan_line('C');
+
           pos++;
         } else if (!isspace(read_buf[pos])) { /* not a space charactor */
           if (end_comment) {                  /* when non-space charactor follows then end of comment, re-check */
@@ -157,6 +186,9 @@ static void count_line(int fd, struct sq_list *comment_list, struct line_counter
       } else {
         if (read_buf[pos] == '\n') {
           update_counter(COUNTER_BLANK, counter);
+
+          print_scan_line('B');
+
           pos++;
         } else if (!isspace(read_buf[pos])) { /* not space charactor */
           int bytes_left = bytes_read - pos, bytes_match = 0;
@@ -204,7 +236,48 @@ static void count_line(int fd, struct sq_list *comment_list, struct line_counter
         }
       }
     }
+
+#ifdef DEBUG
+    if (debug) {
+      if (read_buf[pos] != '\n') {
+        int len = pos - line_start_pos + 1;
+        char *buf;
+
+        if (incomplete_line_len) {
+          if (!(incomplete_line_buf = realloc(incomplete_line_buf, incomplete_line_len + len))) {
+            error(EXIT_FAILURE, "Cannot realloc incomplete line buffer");
+          }
+
+          buf = incomplete_line_buf + incomplete_line_len;
+        } else {
+          if (incomplete_line_buf && incomplete_line_len < len) {
+            free(incomplete_line_buf);
+            incomplete_line_buf = NULL;
+          }
+
+          if (!incomplete_line_buf) {
+            if(!(incomplete_line_buf = malloc(len))) {
+              error(EXIT_FAILURE, "Cannot alloc incomplete line buffer");
+            }
+          }
+
+          buf = incomplete_line_buf;
+        }
+
+        memcpy(buf, read_buf + line_start_pos, len);
+        incomplete_line_len += len;
+      }
+
+      line_start_pos = 0;
+    }
+#endif
   }
+
+#ifdef DEBUG
+  if (incomplete_line_buf) {
+    free(incomplete_line_buf);
+  }
+#endif
 }
 
 static void scan_file(const char *filename) {
