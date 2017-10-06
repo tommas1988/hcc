@@ -20,14 +20,14 @@ all: $(HCC)
 
 .PHONY: all
 
-$(HCC): $(FILES) comment_def_config.c $(patsubst %.c, %.h, $(FILES))
+$(HCC): $(FILES) comment_defs_string.c $(patsubst %.c, %.h, $(FILES))
 	$(CC) -o $@ $(CFLAGS) $(FILES)
 
-comment_def_config.c: comment_def_config.ini build_comment_def_config.sh
-	sh build_comment_def_config.sh
+comment_defs_string.c: default_comment_defs.ini build_comment_defs_string.sh
+	sh build_comment_defs_string.sh
 
 clean:
-	-rm $(HCC) comment_def_config.c > /dev/null 2>&1
+	-rm $(HCC) comment_defs_string.c > /dev/null 2>&1
 
 .PHONY: clean
 

@@ -45,9 +45,6 @@ struct line_counter {
   int comment_lines;
   int blank_lines;
   int code_lines;
-#ifdef DEBUG
-  long int line_type_info;
-#endif
 };
 
 #endif

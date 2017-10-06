@@ -21,7 +21,7 @@
 #include "hash.h"
 #include "hcc.h"
 
-#include "comment_def_config.c"
+#include "comment_defs_string.c"
 
 static boolean show_comment_defs = FALSE;
 static boolean verbose = FALSE;
@@ -236,6 +236,9 @@ static void scan_file(const char *filename) {
   pathname[len] = '\0';
   counter->filename = pathname;
   counter->lang = lang;
+  counter->blank_lines = 0;
+  counter->code_lines = 0;
+  counter->comment_lines = 0;
 
   list_append(&line_counter_list, (void *) counter);
 
@@ -355,7 +358,7 @@ static int build_comment_def(void* unused, const char* lang, const char* name, c
 
     lang_str_cpy(buf, clang);
     strncpy(pattern, value, len);
-    pattern[len+1] = '\0';
+    pattern[len] = '\0';
 
     lang_pattern->lang = buf;
     lang_pattern->pattern = pattern;
@@ -594,9 +597,16 @@ int main(int argc, char *argv[]) {
 
   init_data_struct();
 
-  parse_ret = ini_parse_string(comment_def_config, build_comment_def, NULL);
-  if (parse_ret) {
-    error(EXIT_FAILURE, "parse ini string error: %d\nini string:\n%s\n", parse_ret, comment_def_config);
+  /* set custom comment def first */
+  if (has_custom_comment_defs) {
+    if ((parse_ret = ini_parse(comment_defs_file, build_comment_def, NULL))) {
+      error(EXIT_FAILURE, "parse ini file error: %d\nini file: %s\n", parse_ret, comment_defs_file);
+    }
+  }
+
+  /* default comment defs */
+  if ((parse_ret = ini_parse_string(comment_defs_string, build_comment_def, NULL))) {
+    error(EXIT_FAILURE, "parse ini string error: %d\nini string:\n%s\n", parse_ret, comment_defs_string);
   }
 
   if (show_comment_defs) {
