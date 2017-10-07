@@ -25,6 +25,7 @@
 
 static boolean show_comment_defs = FALSE;
 static boolean verbose = FALSE;
+static int exclude_list_size = 0;
 static struct {
   int lang;
   int pattern;
@@ -36,9 +37,10 @@ static struct {
 static boolean debug = FALSE;
 #endif
 
-static struct sq_list lang_pattern_list;
 static struct hash_table *lang_comment_table;
+static struct sq_list lang_pattern_list;
 static struct sq_list line_counter_list;
+static struct sq_list exclude_list;
 
 static struct sq_list *find_comment_list(const char *filename, char **lang) {
   struct lang_match_pattern *lang_pattern;
@@ -102,7 +104,7 @@ static void count_line(int fd, struct sq_list *comment_list, struct line_counter
       putchar(C);                                                       \
       if (incomplete_line_len) {                                        \
         if (!fwrite(incomplete_line_buf, 1, incomplete_line_len, stdout)) { \
-          error(EXIT_FAILURE, "Cannote write incomplete line buffer");  \
+          error(EXIT_FAILURE, "Cannot write incomplete line buffer");   \
         }                                                               \
         incomplete_line_len = 0;                                        \
       }                                                                 \
@@ -282,10 +284,18 @@ static void count_line(int fd, struct sq_list *comment_list, struct line_counter
 
 static void scan_file(const char *filename) {
   int fd;
-  char *lang, *pathname;
+  char *lang, *pathname, *exclude_pattern;
   int len;
   struct sq_list *comment_list;
   struct line_counter *counter;
+
+  list_reset(&exclude_list);
+  while ((exclude_pattern = (char *) list_current(&exclude_list))) {
+    if (!fnmatch(exclude_pattern, filename, 0)) {
+      return;
+    }
+    list_next(&exclude_list);
+  }
 
   if (!(comment_list = find_comment_list(filename, &lang))) {
     fprintf(stderr, "No matched language found, skip count file: %s\n", filename);
@@ -597,15 +607,58 @@ static void print_result() {
   printf(format, "", total_counter.code_lines, total_counter.comment_lines, total_counter.blank_lines);
 }
 
-static void usage() {
-  puts("Usage: hcc [OPTION]... [FILE]...");
-  puts("Count the actual code lines in each file");
-}
-
 static void init_data_struct() {
   init_sq_list(&lang_pattern_list, INIT_PATTERN_LIST_SIZE);
   init_sq_list(&line_counter_list, INIT_LINE_COUNTER_LIST_SIZE);
   init_hash_table(&lang_comment_table, INIT_LANG_COMMENT_TABLE_SIZE);
+
+  if (exclude_list_size) {
+    init_sq_list(&exclude_list, exclude_list_size);
+  }
+}
+
+#define PATTERN_MAX 128
+static void add_exclude_list_from_file(const char *exclude_file) {
+  FILE *stream;
+  char line[PATTERN_MAX];
+
+  if (!(stream = fopen(exclude_file, "r"))) {
+    error(EXIT_FAILURE, "Cannot open exclude file: %s", exclude_file);
+  }
+
+  while (fgets(line, PATTERN_MAX, stream)) {
+    int len = strlen(line);
+    char *pos, *buf;
+
+    if (len > PATTERN_MAX - 1) {
+      error(EXIT_FAILURE, "Too lang exclude pattern: %s", line);
+    }
+
+    if ((pos = strchr(line, '\n'))) {
+      len = pos - line;
+    }
+
+    if (!(buf = malloc(len + 1))) {
+      error(EXIT_FAILURE, "Cannot alloc exclude pattern buffer");
+    }
+
+    strncpy(buf, line, len);
+    buf[len] = '\0';
+    list_append(&exclude_list, buf);
+  }
+}
+
+static void usage() {
+  puts("Usage: hcc [OPTION]... [FILE]...");
+  puts("Count the actual code lines in each file\n");
+  puts("Options\n\
+    --custom-comment-defs=FILE    define own comment definition\n\
+    --comment-defs-detail         show comment definition detail\n\
+    --exclude=PATTERN             skip count files matching PATTERN\n\
+    --exclude-from=FILE           skip count files matching any pattern from FILE(separate by new line)\n\
+    -v, --verbose                 show verbose result\n\
+    --version                     version number\n\
+    -h, --help                    this help text");
 }
 
 enum {
@@ -615,7 +668,7 @@ enum {
   PARTIAL_TEST_BUF_SIZE_OPTION,
 #endif
   EXCLUDE_OPTION,
-  EXCLUDE_FILE_OPTION,
+  EXCLUDE_FROM_OPTION,
   VERSION_OPTION,
 };
 
@@ -626,7 +679,7 @@ static const struct option long_opts[] = {
   { "debug", no_argument, NULL, DEBUG_OPTION },
 #endif
   { "exclude", required_argument, NULL, EXCLUDE_OPTION },
-  { "exclude-file", required_argument, NULL, EXCLUDE_FILE_OPTION },
+  { "exclude-from", required_argument, NULL, EXCLUDE_FROM_OPTION },
   { "verbose", no_argument, NULL, 'v' },
   { "version", no_argument, NULL, VERSION_OPTION },
   { "help", no_argument, NULL, 'h' },
@@ -638,9 +691,11 @@ int main(int argc, char *argv[]) {
   char pathname[PATH_MAX+1];
   boolean has_custom_comment_defs = FALSE;
   char comment_defs_file[PATH_MAX+1];
+  char *exclude_pattern = NULL;
+  char exclude_file[PATH_MAX+1];
   struct stat sb;
 
-  while ((opt = getopt_long(argc, argv, "cvh?", long_opts, NULL)) != -1) {
+  while ((opt = getopt_long(argc, argv, "vh?", long_opts, NULL)) != -1) {
     switch (opt) {
     case 'c':
       has_custom_comment_defs = TRUE;
@@ -654,6 +709,18 @@ int main(int argc, char *argv[]) {
       debug = TRUE;
       break;
 #endif
+    case EXCLUDE_OPTION:
+      if (!(exclude_pattern = malloc(strlen(optarg) + 1))) {
+        error(EXIT_FAILURE, "Cannot alloc exclude pattern");
+      }
+
+      strcpy(exclude_pattern, optarg);
+      exclude_list_size = exclude_list_size ? exclude_list_size : 1;
+      break;
+    case EXCLUDE_FROM_OPTION:
+      strcpy(exclude_file, optarg);
+      exclude_list_size = 16;
+      break;
     case 'v':
       verbose = TRUE;
       break;
@@ -661,9 +728,12 @@ int main(int argc, char *argv[]) {
     case '?':
       /* TODO: test option errors */
       usage();
-      break;
+      exit(EXIT_SUCCESS);
+
     default:
-      error(EXIT_FAILURE, "unknown option: %d", opt);
+      printf("unknown option: %d", opt);
+      usage();
+      exit(EXIT_FAILURE);
       break;
     }
   }
@@ -687,8 +757,18 @@ int main(int argc, char *argv[]) {
     exit(EXIT_SUCCESS);
   }
 
+  if (exclude_list_size) {
+    if (exclude_pattern) {
+      list_append(&exclude_list, (void *) exclude_pattern);
+    }
+
+    if (exclude_list_size > 1) {
+      add_exclude_list_from_file(exclude_file);
+    }
+  }
+
   if (!argv[optind]) {
-    fputs("File or directory argument is required", stderr);
+    puts("File or directory argument is required");
     usage();
     exit(EXIT_FAILURE);
   }
