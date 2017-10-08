@@ -3,6 +3,8 @@
 
 #include "sq_list.h"
 
+#define HCC_VERSION "1.0.0"
+
 #define MAX_FTW_FD 10
 
 #define MAX_LANG_SIZE 10

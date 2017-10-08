@@ -724,17 +724,18 @@ int main(int argc, char *argv[]) {
     case 'v':
       verbose = TRUE;
       break;
+    case VERSION_OPTION:
+      printf("%s\n", HCC_VERSION);
+      exit(EXIT_SUCCESS);
     case 'h':
     case '?':
       /* TODO: test option errors */
       usage();
       exit(EXIT_SUCCESS);
-
     default:
       printf("unknown option: %d", opt);
       usage();
       exit(EXIT_FAILURE);
-      break;
     }
   }
 
