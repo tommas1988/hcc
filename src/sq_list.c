@@ -28,7 +28,7 @@ void list_append(struct sq_list *list, void *value) {
   if (list->next_free == list->length) {
     int size = list->length << 1;
 
-    if (!(list = realloc(list, size))) {
+    if (!(list->data = realloc(list->data, sizeof(void *) * size))) {
       error(EXIT_FAILURE, "Cannot extend sequence list");
     }
     list->length = size;

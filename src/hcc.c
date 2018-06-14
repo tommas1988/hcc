@@ -298,7 +298,7 @@ static void scan_file(const char *filename) {
   }
 
   if (!(comment_list = find_comment_list(filename, &lang))) {
-    fprintf(stderr, "No matched language found, skip count file: %s\n", filename);
+    if (verbose) fprintf(stderr, "No matched language found, skip count file: %s\n", filename);
     return;
   }
 
@@ -333,6 +333,8 @@ static void scan_file(const char *filename) {
   posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
 
   count_line(fd, comment_list, counter);
+
+  close(fd);
 }
 
 static int count_for_file(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
