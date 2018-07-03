@@ -1,6 +1,14 @@
 #ifndef __HCC_H
 #define __HCC_H
 
+typedef enum {
+  BLANK_LINE,
+  CODE_LINE,
+  COMMENT_BLOCK,
+  COMMENT_BLOCK_END_LINE,
+  COMMENT_LINE
+} POS_STATE;
+
 #include "sq_list.h"
 
 #define HCC_VERSION "1.0.0"
