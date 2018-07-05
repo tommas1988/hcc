@@ -650,17 +650,30 @@ static void add_exclude_list_from_file(const char *exclude_file) {
   }
 }
 
-static void usage() {
-  puts("Usage: hcc [OPTION]... [FILE]...");
-  puts("Count the actual code lines in each file\n");
-  puts("Options\n\
-    --custom-comment-defs=FILE    define own comment definition\n\
-    --comment-defs-detail         show comment definition detail\n\
-    --exclude=PATTERN             skip count files matching PATTERN\n\
-    --exclude-from=FILE           skip count files matching any pattern from FILE(separate by new line)\n\
-    -v, --verbose                 show verbose result\n\
-    --version                     version number\n\
-    -h, --help                    this help text");
+static void usage(int status) {
+  if (status != EXIT_SUCCESS) {
+    // print help information
+  } else {
+    puts("\
+Usage: hcc [OPTION]... TARGET...\n\
+Count code lines, blank lines, comment lines and files for languages\n\
+in TARGET(s)\n\
+");
+
+    puts("\
+OPTION\n\
+    -h, --human-readable        display formatted number and additional\
+                                percentage\n\
+    -c, --comment-defs=FILE     use custom comment definitions\n\
+    -C, --show-comment-defs     show current comment definitions\n\
+        --include=PATTERN       count only files that match PATTERN\n\
+        --exclude=PATTERN       skip files matching PATTERN\n\
+        --exclude-from=FILE     skip files matching any pattern from FILE\n\
+                                (separate by new line)\n\
+        --version               display version information and exit\n\
+        --help                  display this help text and exit\
+");
+  }
 }
 
 enum {
